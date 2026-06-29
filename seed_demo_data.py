@@ -1,15 +1,22 @@
 """
-Dashboard'u dolu göstermek için gerçekçi ÖRNEK veri üretir.
+Dashboard'u dolu göstermek için gerçekçi ÖRNEK veri üretir (MySQL).
 Çalıştır:   python seed_demo_data.py
 Temizle:    python seed_demo_data.py --clear
 """
 
-import sqlite3
-import random
 import sys
+
+# Windows konsolu (cp1254) emoji içeren print'lerde çökmesin diye UTF-8'e geç
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+import random
 from datetime import datetime, timedelta
 
-DB_NAME = "usage_logs.db"
+from Services.usage_logger import initialize_database, get_connection
 
 INPUT_PRICE = 0.40 / 1_000_000   # USD / token
 OUTPUT_PRICE = 1.60 / 1_000_000
@@ -27,31 +34,21 @@ SENDER_WEIGHTS = [9, 7, 6, 5, 4, 3, 3, 2, 2, 1]
 MODELS = ["gpt-4.1-mini"] * 6 + ["gpt-4o-mini-transcribe"] * 1
 
 
-def ensure_table(cur):
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS usage_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT, sender TEXT, model TEXT,
-            prompt_tokens INTEGER, completion_tokens INTEGER,
-            total_tokens INTEGER, cost REAL, response_time REAL
-        )
-    """)
-
-
 def clear():
-    conn = sqlite3.connect(DB_NAME)
+    initialize_database()
+    conn = get_connection()
     cur = conn.cursor()
-    ensure_table(cur)
     cur.execute("DELETE FROM usage_logs")
     conn.commit()
+    cur.close()
     conn.close()
     print("Tum demo veriler silindi.")
 
 
 def seed():
-    conn = sqlite3.connect(DB_NAME)
+    initialize_database()
+    conn = get_connection()
     cur = conn.cursor()
-    ensure_table(cur)
     cur.execute("DELETE FROM usage_logs")
 
     rows = []
@@ -90,20 +87,22 @@ def seed():
             rt = round(random.uniform(0.7, 4.6), 3)
 
             rows.append((
-                ts.strftime("%Y-%m-%d %H:%M:%S"),
+                ts,
                 sender, model, prompt, completion, total, cost, rt,
             ))
 
+    # timestamp artik gercek DATETIME; datetime nesnesine gore sirala
     rows.sort(key=lambda r: r[0])
 
     cur.executemany(
         """INSERT INTO usage_logs
            (timestamp, sender, model, prompt_tokens, completion_tokens,
             total_tokens, cost, response_time)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
         rows,
     )
     conn.commit()
+    cur.close()
     conn.close()
     print(f"{len(rows)} demo kayit eklendi ({len(SENDERS)} musteri, 14 gun).")
 
