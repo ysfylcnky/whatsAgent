@@ -1,0 +1,267 @@
+﻿<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsAgent · Command Center</title>
+
+<link rel="stylesheet" href="/static/css/vendor/fontawesome.min.css">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=21">
+<script src="/static/js/vendor/chart.umd.min.js"></script>
+</head>
+
+<body>
+
+<!-- arkaplan aurora ışıkları -->
+<div class="aurora aurora-1"></div>
+<div class="aurora aurora-2"></div>
+<div class="aurora aurora-3"></div>
+
+<div class="dashboard-layout">
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+
+        <div>
+            <div class="logo">
+                <div class="logo-icon"><i class="fa-brands fa-whatsapp"></i></div>
+                <div>
+                    <h3>WhatsAgent</h3>
+                    <span>Command Center</span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <span class="nav-label">Genel</span>
+                <div class="nav-item active">
+                    <i class="fa-solid fa-gauge-high"></i><span>Dashboard</span>
+                </div>
+                <div class="nav-item">
+                    <i class="fa-solid fa-comments"></i><span>Conversations</span>
+                    <span class="nav-pill">12</span>
+                </div>
+                <div class="nav-item">
+                    <i class="fa-solid fa-users"></i><span>Customers</span>
+                </div>
+
+                <span class="nav-label">Zekâ</span>
+                <div class="nav-item">
+                    <i class="fa-solid fa-robot"></i><span>AI Usage</span>
+                </div>
+                <div class="nav-item">
+                    <i class="fa-solid fa-chart-pie"></i><span>Reports</span>
+                </div>
+                <div class="nav-item">
+                    <i class="fa-solid fa-gear"></i><span>Settings</span>
+                </div>
+            </nav>
+        </div>
+
+        <div class="sidebar-card">
+            <div class="sidebar-card-icon"><i class="fa-solid fa-bolt"></i></div>
+            <strong>Pro aktif</strong>
+            <span>Sınırsız AI yanıt</span>
+            <div class="sidebar-footer">WhatsAgent v2.0</div>
+        </div>
+
+    </aside>
+
+    <!-- ============ MAIN ============ -->
+    <main class="main-content">
+
+        <header class="topbar">
+            <div>
+                <h1>Hoş geldin 👋</h1>
+                <p id="todayLine">Sistem performansının canlı görünümü</p>
+            </div>
+
+            <div class="topbar-actions">
+                <div class="clock" id="liveClock">--:--</div>
+                <button class="icon-btn" id="refreshBtn" title="Yenile">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+                <div class="status-badge">
+                    <span class="status-dot"></span> Canlı
+                </div>
+                <div class="avatar">AK</div>
+            </div>
+        </header>
+
+        <!-- ====== KPI CARDS ====== -->
+        <section class="kpi-grid">
+
+            <article class="kpi-card" data-accent="green">
+                <div class="kpi-top">
+                    <div class="kpi-icon"><i class="fa-solid fa-users"></i></div>
+                    <span class="trend" id="trendCustomers"></span>
+                </div>
+                <span class="kpi-label">Müşteriler</span>
+                <h2 id="uniqueCustomers">0</h2>
+                <div class="spark"><canvas id="sparkCustomers"></canvas></div>
+            </article>
+
+            <article class="kpi-card" data-accent="violet">
+                <div class="kpi-top">
+                    <div class="kpi-icon"><i class="fa-solid fa-paper-plane"></i></div>
+                    <span class="trend" id="trendRequests"></span>
+                </div>
+                <span class="kpi-label">Toplam İstek</span>
+                <h2 id="totalRequests">0</h2>
+                <div class="spark"><canvas id="sparkRequests"></canvas></div>
+            </article>
+
+            <article class="kpi-card" data-accent="amber">
+                <div class="kpi-top">
+                    <div class="kpi-icon"><i class="fa-solid fa-coins"></i></div>
+                    <span class="trend" id="trendCost"></span>
+                </div>
+                <span class="kpi-label">AI Maliyeti</span>
+                <h2 id="aiCost">₺0</h2>
+                <div class="spark"><canvas id="sparkCost"></canvas></div>
+            </article>
+
+            <article class="kpi-card" data-accent="cyan">
+                <div class="kpi-top">
+                    <div class="kpi-icon"><i class="fa-solid fa-piggy-bank"></i></div>
+                    <span class="trend up" id="trendSavings"></span>
+                </div>
+                <span class="kpi-label">Tasarruf</span>
+                <h2 id="estimatedSavings">₺0</h2>
+                <div class="spark"><canvas id="sparkSavings"></canvas></div>
+            </article>
+
+        </section>
+
+        <!-- ====== HERO + DONUT ====== -->
+        <section class="grid grid-2-1">
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h4>Kullanım Trendi</h4>
+                        <p>Son 14 günün aktivitesi</p>
+                    </div>
+                    <div class="seg" id="trendToggle">
+                        <button class="seg-btn active" data-metric="requests">İstek</button>
+                        <button class="seg-btn" data-metric="tokens">Token</button>
+                        <button class="seg-btn" data-metric="cost">Maliyet</button>
+                    </div>
+                </div>
+                <div class="canvas-wrap" style="height:300px">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h4>Token Dağılımı</h4>
+                        <p>Prompt / Completion</p>
+                    </div>
+                    <i class="fa-solid fa-layer-group head-icon"></i>
+                </div>
+                <div class="canvas-wrap donut-wrap" style="height:230px">
+                    <canvas id="tokenSplitChart"></canvas>
+                    <div class="donut-center">
+                        <strong id="donutTotal">0</strong>
+                        <span>toplam token</span>
+                    </div>
+                </div>
+                <div class="legend" id="tokenLegend"></div>
+            </article>
+
+        </section>
+
+        <!-- ====== 3 CHARTS ROW ====== -->
+        <section class="grid grid-3">
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div><h4>Saatlik Yoğunluk</h4><p>Güne göre istek</p></div>
+                    <i class="fa-solid fa-clock head-icon"></i>
+                </div>
+                <div class="canvas-wrap" style="height:230px">
+                    <canvas id="hourlyChart"></canvas>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div><h4>Model Kullanımı</h4><p>Modele göre istek</p></div>
+                    <i class="fa-solid fa-robot head-icon"></i>
+                </div>
+                <div class="canvas-wrap" style="height:230px">
+                    <canvas id="modelChart"></canvas>
+                </div>
+            </article>
+
+            <article class="panel gauge-panel">
+                <div class="panel-head">
+                    <div><h4>Yanıt Süresi</h4><p>Ortalama performans</p></div>
+                    <i class="fa-solid fa-gauge-high head-icon"></i>
+                </div>
+                <div class="canvas-wrap gauge-wrap" style="height:185px">
+                    <canvas id="gaugeChart"></canvas>
+                    <div class="gauge-center">
+                        <strong id="gaugeValue">0</strong>
+                        <span>saniye</span>
+                    </div>
+                </div>
+                <div class="gauge-scale"><span>0s</span><span>hızlı</span><span>5s</span></div>
+            </article>
+
+        </section>
+
+        <!-- ====== ACTIVITY + TOP CUSTOMERS ====== -->
+        <section class="grid grid-2-1">
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div><h4>Son Aktiviteler</h4><p>Platformdaki son olaylar</p></div>
+                    <i class="fa-regular fa-bell head-icon"></i>
+                </div>
+                <div class="timeline" id="activityTimeline">
+                    <div class="empty"><i class="fa-regular fa-clock"></i><span>Yükleniyor…</span></div>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div><h4>En Aktif Müşteriler</h4><p>İstek sayısına göre</p></div>
+                    <i class="fa-solid fa-ranking-star head-icon"></i>
+                </div>
+                <div class="ranklist" id="topCustomers">
+                    <div class="empty"><i class="fa-solid fa-user"></i><span>Yükleniyor…</span></div>
+                </div>
+            </article>
+
+        </section>
+
+        <!-- ====== BUSINESS STRIP ====== -->
+        <section class="biz-strip">
+            <div class="biz-item">
+                <i class="fa-solid fa-hourglass-half"></i>
+                <div><span>Kazanılan Saat</span><strong id="savedHours">0</strong></div>
+            </div>
+            <div class="biz-item">
+                <i class="fa-solid fa-money-bill-wave"></i>
+                <div><span>Personel Maliyeti</span><strong id="employeeCost">₺0</strong></div>
+            </div>
+            <div class="biz-item">
+                <i class="fa-solid fa-dollar-sign"></i>
+                <div><span>USD / TRY</span><strong id="usdRate">0</strong></div>
+            </div>
+            <div class="biz-item">
+                <i class="fa-solid fa-bolt"></i>
+                <div><span>Ort. Yanıt</span><strong id="responseTime">0</strong></div>
+            </div>
+        </section>
+
+    </main>
+
+</div>
+
+<script src="/static/js/dashboard.js?v=21"></script>
+
+</body>
+</html>
