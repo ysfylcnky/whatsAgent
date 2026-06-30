@@ -11,6 +11,7 @@ AUDIO_MODEL_NAME = "gpt-4o-mini-transcribe"
 # WhatsApp
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
+WHATSAPP_GROUP_ID = os.getenv("WHATSAPP_GROUP_ID")
 
 # MySQL (bağlantı bilgileri .env'den okunur)
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")

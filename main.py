@@ -24,6 +24,7 @@ from config import (
     MAX_HISTORY,
     SESSION_TIMEOUT,
     VERIFY_TOKEN,
+    WHATSAPP_GROUP_ID,
 )
 from Services.product_service import (
     get_product_context,
@@ -34,11 +35,15 @@ from Services.media_service import (
     download_whatsapp_media,
     transcribe_audio
 )
-from Services.whatsapp_service import send_whatsapp_message
+from Services.whatsapp_service import (
+    send_whatsapp_message,
+    send_whatsapp_group_message
+)
 from Services.openai_service import (
     general_chat,
     product_chat
 )
+from Services.order_service import format_order_message
 from Services.usage_logger import initialize_database
 from Services.message_service import is_duplicate
 from Services.dashboard_service import get_dashboard_data
@@ -317,7 +322,50 @@ async def whatsapp_webhook(request: Request):
             )
             print(response) # geçici
 
-            assistant_answer = response["answer"]
+            tool_call = response.get("tool_call")
+
+            # Müşteri siparişi onayladıysa model siparis_olustur tool'unu çağırır
+            if tool_call and tool_call["name"] == "siparis_olustur":
+
+                order = tool_call["arguments"]
+
+                group_message = format_order_message(order)
+
+                # Sipariş mağaza WhatsApp grubuna iletilir
+                if WHATSAPP_GROUP_ID:
+
+                    try:
+
+                        send_whatsapp_group_message(
+                            WHATSAPP_GROUP_ID,
+                            group_message
+                        )
+
+                    except Exception as e:
+
+                        # Grup gönderimi başarısız olsa bile akış kesilmez
+                        print("GROUP SEND ERROR:", str(e))
+
+                else:
+
+                    print("⚠️ WHATSAPP_GROUP_ID tanımlı değil")
+
+                assistant_answer = (
+                    "Siparişiniz alındı 😊 En kısa sürede hazırlanıp "
+                    "kargoya verilecek. Kargo takip numaranız mesaj olarak "
+                    "tarafınıza iletilecek 💕"
+                )
+
+            else:
+
+                assistant_answer = response["answer"]
+
+                # Tool çağrısı yokken içerik None gelirse nazik bir fallback
+                if not assistant_answer:
+
+                    assistant_answer = (
+                        "Bu konuda size nasıl yardımcı olabilirim? 😊"
+                    )
 
             chat_sessions[sender]["history"].append(
                 {

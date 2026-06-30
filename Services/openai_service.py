@@ -1,6 +1,8 @@
 ﻿from openai import OpenAI
 import time
+import json
 from Services.usage_logger import log_usage
+from Services.order_service import SIPARIS_TOOL
 from config import (
     OPENAI_API_KEY,
     MODEL_NAME,
@@ -12,14 +14,23 @@ client = OpenAI(
     api_key=OPENAI_API_KEY
 )
 
-def _create_chat(messages, sender):
+def _create_chat(messages, sender, tools=None):
 
     start_time = time.time()
 
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=messages
-    )
+    # tools verilmişse modele tool calling imkanı tanınır
+    if tools:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto"
+        )
+    else:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages
+        )
 
     response_time = time.time() - start_time
     prompt_cost = (
@@ -52,9 +63,25 @@ def _create_chat(messages, sender):
 
     )
 
+    message = response.choices[0].message
+
+    # Modelin döndürdüğü tool çağrısı varsa ilkini parse et
+    tool_call = None
+
+    if message.tool_calls:
+
+        first_call = message.tool_calls[0]
+
+        tool_call = {
+            "name": first_call.function.name,
+            "arguments": json.loads(first_call.function.arguments)
+        }
+
     return {
 
-        "answer": response.choices[0].message.content,
+        "answer": message.content,
+
+        "tool_call": tool_call,
 
         "prompt_tokens": response.usage.prompt_tokens,
 
@@ -118,4 +145,8 @@ def product_chat(
 
     ]
 
-    return _create_chat(messages,sender)
+    return _create_chat(
+        messages,
+        sender,
+        tools=[SIPARIS_TOOL]
+    )
