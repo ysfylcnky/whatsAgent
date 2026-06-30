@@ -123,7 +123,8 @@ def product_chat(
     products_block,
     history,
     message_text,
-    sender
+    sender,
+    include_order_tool=True
 ):
 
     messages = [
@@ -145,8 +146,10 @@ def product_chat(
 
     ]
 
+    # siparis_olustur tool'u yalnızca yeni sipariş alınabilir durumda verilir.
+    # Sipariş zaten oluşturulmuşsa tool verilmez -> tekrar sipariş/grup gönderimi engellenir.
     return _create_chat(
         messages,
         sender,
-        tools=[SIPARIS_TOOL]
+        tools=[SIPARIS_TOOL] if include_order_tool else None
     )

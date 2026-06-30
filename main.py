@@ -70,6 +70,61 @@ def extract_url(text):
     return None
 
 
+def looks_like_payment_done(text):
+
+    # Müşteri metinle ödeme yaptığını / dekont gönderdiğini belirtiyor mu?
+    lower = text.lower()
+
+    keywords = [
+        "ödedim",
+        "odedim",
+        "ödeme yaptım",
+        "odeme yaptim",
+        "havale yaptım",
+        "havale yaptim",
+        "eft yaptım",
+        "eft yaptim",
+        "dekont",
+        "parayı yatırdım",
+        "parayi yatirdim",
+        "parayı gönderdim",
+        "parayi gonderdim"
+    ]
+
+    return any(k in lower for k in keywords)
+
+
+def close_order_with_receipt(sender):
+
+    # Havale/EFT siparişinde dekont gelince siparişi kapatır.
+    # Gruba kısa bilgi geçer ve müşteriye kapanış mesajı gönderir.
+    if WHATSAPP_GROUP_ID:
+
+        try:
+
+            send_whatsapp_group_message(
+                WHATSAPP_GROUP_ID,
+                "✅ Ödeme dekontu geldi."
+            )
+
+        except Exception as e:
+
+            # Grup gönderimi başarısız olsa bile akış kesilmez
+            print("GROUP SEND ERROR:", str(e))
+
+    else:
+
+        print("⚠️ WHATSAPP_GROUP_ID tanımlı değil")
+
+    chat_sessions[sender]["order_state"] = "tamamlandi"
+
+    send_whatsapp_message(
+        sender,
+        "Dekontunuz elimize ulaştı, siparişiniz hazırlanıp kargoya "
+        "verilecek. Teşekkür ederiz 💕"
+    )
+
+
 def cleanup_sessions():
     now = time.time()
 
@@ -190,6 +245,24 @@ async def whatsapp_webhook(request: Request):
 
             message_text = transcribe_audio(audio_bytes)
 
+        elif message_type == "image":
+
+            # Ödeme bekleniyorsa gelen görsel dekont olarak işlenir, sipariş kapanır.
+            session = chat_sessions.get(sender)
+
+            if session and session.get("order_state") == "odeme_bekliyor":
+
+                close_order_with_receipt(sender)
+
+                return {"status": "ok"}
+
+            send_whatsapp_message(
+                sender,
+                "Şu an yazılı ve sesli mesajları yanıtlayabiliyorum 😊"
+            )
+
+            return {"status": "ok"}
+
         else:
 
             send_whatsapp_message(
@@ -207,6 +280,7 @@ async def whatsapp_webhook(request: Request):
                 "history": [],
                 "products": {},
                 "active_url": None,
+                "order_state": None,
                 "last_activity": time.time()
             }
         chat_sessions[sender]["last_activity"] = time.time()
@@ -216,6 +290,9 @@ async def whatsapp_webhook(request: Request):
         if url:
 
             chat_sessions[sender]["active_url"] = url
+
+            # Yeni ürün linki gelince sipariş durumu sıfırlanır (aynı oturumda yeni sipariş alınabilir)
+            chat_sessions[sender]["order_state"] = None
 
             print(
                 "KAYDEDİLEN URL:",
@@ -260,6 +337,16 @@ async def whatsapp_webhook(request: Request):
             message_text = cleaned_message
 
         active_url = chat_sessions[sender]["active_url"]
+
+        order_state = chat_sessions[sender].get("order_state")
+
+        # Havale/EFT'de ödeme bekleniyorsa: müşteri metinle ödeme yaptığını
+        # belirtirse dekont kabul edilir ve sipariş kapatılır.
+        if order_state == "odeme_bekliyor" and looks_like_payment_done(message_text):
+
+            close_order_with_receipt(sender)
+
+            return {"status": "ok"}
 
         lower_message = message_text.lower()
 
@@ -313,12 +400,14 @@ async def whatsapp_webhook(request: Request):
 
             history = chat_sessions[sender]["history"][-MAX_HISTORY:]
 
+            # siparis_olustur tool'u yalnızca yeni sipariş alınabilir durumda (order_state None) verilir
             response = product_chat(
                 system_prompt,
                 products_block,
                 history,
                 message_text,
-                sender
+                sender,
+                include_order_tool=(order_state is None)
             )
             print(response) # geçici
 
@@ -350,8 +439,11 @@ async def whatsapp_webhook(request: Request):
 
                     print("⚠️ WHATSAPP_GROUP_ID tanımlı değil")
 
-                # Müşteriye dönen bilgilendirme ödeme türüne göre değişir
+                # Müşteriye dönen bilgilendirme ve sipariş durumu ödeme türüne göre değişir
                 if order.get("odeme_sekli") == "Havale/EFT":
+
+                    # Havale/EFT'de önce ödeme/dekont beklenir
+                    chat_sessions[sender]["order_state"] = "odeme_bekliyor"
 
                     assistant_answer = (
                         "Siparişiniz alındı 😊 Ödemenizi yaptıktan sonra "
@@ -360,6 +452,9 @@ async def whatsapp_webhook(request: Request):
                     )
 
                 else:
+
+                    # Kapıda Ödeme'de sipariş doğrudan tamamlanır
+                    chat_sessions[sender]["order_state"] = "tamamlandi"
 
                     assistant_answer = (
                         "Siparişiniz alındı 😊 En kısa sürede hazırlanıp "
