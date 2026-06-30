@@ -350,11 +350,22 @@ async def whatsapp_webhook(request: Request):
 
                     print("⚠️ WHATSAPP_GROUP_ID tanımlı değil")
 
-                assistant_answer = (
-                    "Siparişiniz alındı 😊 En kısa sürede hazırlanıp "
-                    "kargoya verilecek. Kargo takip numaranız mesaj olarak "
-                    "tarafınıza iletilecek 💕"
-                )
+                # Müşteriye dönen bilgilendirme ödeme türüne göre değişir
+                if order.get("odeme_sekli") == "Havale/EFT":
+
+                    assistant_answer = (
+                        "Siparişiniz alındı 😊 Ödemenizi yaptıktan sonra "
+                        "siparişiniz hazırlanıp kargoya verilecektir. "
+                        "Dekontunuzu buraya iletebilirsiniz 💕"
+                    )
+
+                else:
+
+                    assistant_answer = (
+                        "Siparişiniz alındı 😊 En kısa sürede hazırlanıp "
+                        "kargoya verilecek. Kargo takip numaranız mesaj olarak "
+                        "tarafınıza iletilecek 💕"
+                    )
 
             else:
 
