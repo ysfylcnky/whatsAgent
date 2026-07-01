@@ -26,12 +26,10 @@ from config import (
     VERIFY_TOKEN,
     WHATSAPP_GROUP_ID,
 )
-from Services.product_service import (
-    get_product_context,
-    build_ai_context,
-    get_cached_ai_context
+from Services.ikas_service import (
+    get_cached_ikas_context,
+    get_cached_ikas_context_by_id
 )
-from Services.ikas_service import get_cached_ikas_context
 from Services.media_service import (
     download_whatsapp_media,
     transcribe_audio
@@ -69,6 +67,17 @@ def extract_url(text):
         return urls[0]
 
     return None
+
+
+def slug_to_query(url):
+
+    # Linkin son yol parçasından (slug) İKAS'ta aranabilir bir ürün adı çıkarır
+    # Örn: https://.../yeni-sezon-liya-puantiye-etek -> "yeni sezon liya puantiye etek"
+    path = url.split("?", 1)[0].rstrip("/")
+
+    slug = path.rsplit("/", 1)[-1]
+
+    return slug.replace("-", " ").replace("_", " ").strip()
 
 
 def looks_like_payment_done(text):
@@ -219,11 +228,12 @@ def home():
 @app.get("/product-context")
 def product_context(url: str):
 
-    product = get_product_context(url)
+    # Test/inceleme amaçlı: linkin slug'ından ürün adı çıkarılıp İKAS'ta aranır
+    query = slug_to_query(url)
 
-    ai_context = build_ai_context(product)
+    ai_context, _ = get_cached_ikas_context(query)
 
-    return ai_context
+    return ai_context or {"error": "not_found", "query": query}
 
 @app.get("/admin/dashboard")
 def admin_dashboard():
@@ -344,13 +354,35 @@ async def whatsapp_webhook(request: Request):
 
         if url:
 
-            chat_sessions[sender]["active_url"] = url
+            # Link akışı da tek kaynağa (İKAS) akar: slug'dan çıkarılan isimle aranır
+            search_query = slug_to_query(url)
 
-            # Yeni ürün linki gelince sipariş durumu sıfırlanır (aynı oturumda yeni sipariş alınabilir)
+            ai_context, product_id = get_cached_ikas_context(search_query)
+
+            if not ai_context:
+
+                send_whatsapp_message(
+                    sender,
+                    "Bu linkteki ürünü bulamadım 🙏 Ürünün ismini yazabilir misiniz?"
+                )
+
+                return {"status": "ok"}
+
+            product_key = f"ikas:{product_id}"
+
+            store_product(
+                chat_sessions[sender],
+                product_key,
+                ai_context
+            )
+
+            chat_sessions[sender]["active_url"] = product_key
+
+            # Yeni ürün gelince sipariş durumu sıfırlanır (aynı oturumda yeni sipariş alınabilir)
             chat_sessions[sender]["order_state"] = None
 
             print(
-                "KAYDEDİLEN URL:",
+                "KAYDEDİLEN ÜRÜN:",
                 chat_sessions[sender]["active_url"]
             )
 
@@ -360,27 +392,6 @@ async def whatsapp_webhook(request: Request):
             ).strip()
 
             if not cleaned_message:
-
-                try:
-
-                    ai_context = get_cached_ai_context(url)
-
-                    store_product(
-                        chat_sessions[sender],
-                        url,
-                        ai_context
-                    )
-
-                except Exception as e:
-
-                    print("PRODUCT ERROR:", str(e))
-
-                    send_whatsapp_message(
-                        sender,
-                        "Ürün bilgisine şu anda ulaşamadım 🙏 Linki tekrar gönderebilir misiniz?"
-                    )
-
-                    return {"status": "ok"}
 
                 send_whatsapp_message(
                     sender,
@@ -458,13 +469,21 @@ async def whatsapp_webhook(request: Request):
 
         try:
 
-            ai_context = get_cached_ai_context(active_url)
+            # Aktif ürün her zaman İKAS kaynaklı ("ikas:<id>"); güncel veri id ile
+            # tazelenir. Yenileme başarısız olursa session'daki mevcut context kullanılır.
+            if active_url and active_url.startswith("ikas:"):
 
-            store_product(
-                chat_sessions[sender],
-                active_url,
-                ai_context
-            )
+                product_id = active_url.split("ikas:", 1)[1]
+
+                fresh_context = get_cached_ikas_context_by_id(product_id)
+
+                if fresh_context:
+
+                    store_product(
+                        chat_sessions[sender],
+                        active_url,
+                        fresh_context
+                    )
 
             products_block = build_products_block(
                 chat_sessions[sender]

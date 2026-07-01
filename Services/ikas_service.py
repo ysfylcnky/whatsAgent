@@ -1,4 +1,5 @@
 import requests
+import re
 import time
 from config import (
     IKAS_STORE_NAME,
@@ -67,12 +68,26 @@ query SearchProducts($input: SearchInput!) {
 }
 """
 
+# searchProducts hiç sonuç döndürmezse (tam metin arama başarısızsa) yedek olarak
+# ürünler isimleriyle listelenip Python'da eşlenir.
+LIST_PRODUCT_QUERY = """
+query ListProduct($pagination: PaginationInput) {
+  listProduct(pagination: $pagination) {
+    data {
+      id
+      name
+    }
+  }
+}
+"""
+
 _token_cache = {
     "access_token": None,
     "expires_at": 0
 }
 
 ikas_search_cache = {}
+ikas_product_cache = {}
 
 
 def _get_access_token():
@@ -159,56 +174,128 @@ def _normalize_tr(text):
     return text.strip()
 
 
-def _score_match(query_norm, name_norm):
+def _meaningful_words(text):
 
-    if not name_norm:
-        return 0
+    # Sorgu/ürün adını anlamlı (2+ karakterli) kelimelere ayırır
+    norm = _normalize_tr(text)
 
-    if name_norm == query_norm:
-        return 3
-
-    if name_norm.startswith(query_norm):
-        return 2
-
-    if query_norm in name_norm:
-        return 1
-
-    return 0
+    return [w for w in re.findall(r"[a-z0-9]+", norm) if len(w) >= 2]
 
 
-def search_product_by_name(name):
+def _word_matches(query_word, name_words):
+
+    # Türkçe ek farklarını tolere etmek için (ör. "desenli" ~ "desen") önek eşleşmesi de kabul edilir
+    for name_word in name_words:
+
+        if query_word == name_word:
+            return True
+
+        if len(query_word) >= 4 and len(name_word) >= 4:
+
+            shorter, longer = (
+                (query_word, name_word)
+                if len(query_word) <= len(name_word)
+                else (name_word, query_word)
+            )
+
+            if longer.startswith(shorter):
+                return True
+
+    return False
+
+
+def _score_match(query_words, name_words):
+
+    if not query_words:
+        return 0.0
+
+    matched = sum(1 for w in query_words if _word_matches(w, name_words))
+
+    return matched / len(query_words)
+
+
+def _search_raw(variables):
+
+    data = _graphql(SEARCH_PRODUCTS_QUERY, variables)
+
+    if not data:
+        return []
+
+    return (data.get("searchProducts") or {}).get("results") or []
+
+
+def _list_product_name_candidates():
 
     data = _graphql(
-        SEARCH_PRODUCTS_QUERY,
+        LIST_PRODUCT_QUERY,
+        {"pagination": {"page": 1, "limit": 100}}
+    )
+
+    if not data:
+        return []
+
+    return (data.get("listProduct") or {}).get("data") or []
+
+
+def get_product_by_id(product_id):
+
+    # Aktif üründe takip sorularında (fiyat/renk/beden) kullanılmak üzere
+    # ürünü tam veriyle (varyant/fiyat/stok) id ile yeniden çeker.
+    results = _search_raw(
         {
             "input": {
-                "query": name,
-                "pagination": {"page": 1, "limit": 10}
+                "productIdList": [product_id],
+                "pagination": {"page": 1, "limit": 1}
             }
         }
     )
 
-    if not data:
+    return results[0] if results else None
+
+
+def search_product_by_name(name):
+
+    query_words = _meaningful_words(name)
+
+    if not query_words:
         return None
 
-    results = (data.get("searchProducts") or {}).get("results") or []
+    candidates = _search_raw(
+        {
+            "input": {
+                "query": name,
+                "pagination": {"page": 1, "limit": 20}
+            }
+        }
+    )
 
-    if not results:
+    if not candidates:
+        # Tam metin arama sonuç vermezse ürünler listelenip Python'da eşlenir
+        candidates = _list_product_name_candidates()
+
+    if not candidates:
         return None
 
-    query_norm = _normalize_tr(name)
+    best_product = None
+    best_score = 0.0
 
-    best_product = results[0]
-    best_score = -1
+    for product in candidates:
 
-    for product in results:
-
-        name_norm = _normalize_tr(product.get("name", ""))
-        score = _score_match(query_norm, name_norm)
+        name_words = _meaningful_words(product.get("name", ""))
+        score = _score_match(query_words, name_words)
 
         if score > best_score:
             best_score = score
             best_product = product
+
+    # Sorgudaki hiçbir anlamlı kelime hiçbir adayla eşleşmediyse bulunamadı sayılır
+    if best_product is None or best_score <= 0:
+        return None
+
+    # Aday listProduct'tan (yalnızca id/name) geldiyse ya da varyant verisi eksikse
+    # seçilen ürünün tam verisi id ile yeniden çekilir.
+    if not best_product.get("variants"):
+        return get_product_by_id(best_product.get("id"))
 
     return best_product
 
@@ -338,3 +425,40 @@ def get_cached_ikas_context(urun_ismi):
     }
 
     return context, product_id
+
+
+def get_cached_ikas_context_by_id(product_id):
+
+    # Aktif ürünün session'daki context'ini tazelemek için id ile çalışır;
+    # link parser'ına ihtiyaç duymaz (tek kaynak İKAS).
+    now = time.time()
+
+    if product_id in ikas_product_cache:
+
+        cached = ikas_product_cache[product_id]
+
+        if now - cached["created_at"] < CACHE_TTL:
+            print(f"🟢 IKAS Cache HIT (id): {product_id}")
+            return cached["context"]
+
+        del ikas_product_cache[product_id]
+
+    print(f"🟡 IKAS Cache MISS (id): {product_id}")
+
+    try:
+        product = get_product_by_id(product_id)
+    except Exception as e:
+        print("IKAS FETCH BY ID ERROR:", str(e))
+        return None
+
+    if product is None:
+        return None
+
+    context = build_ikas_ai_context(product)
+
+    ikas_product_cache[product_id] = {
+        "context": context,
+        "created_at": now
+    }
+
+    return context
