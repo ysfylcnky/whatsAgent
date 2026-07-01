@@ -13,6 +13,11 @@ WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_GROUP_ID = os.getenv("WHATSAPP_GROUP_ID")
 
+# İKAS (ürün ismiyle arama)
+IKAS_STORE_NAME = os.getenv("IKAS_STORE_NAME")
+IKAS_CLIENT_ID = os.getenv("IKAS_CLIENT_ID")
+IKAS_CLIENT_SECRET = os.getenv("IKAS_CLIENT_SECRET")
+
 # MySQL (bağlantı bilgileri .env'den okunur)
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))

@@ -3,6 +3,7 @@ import time
 import json
 from Services.usage_logger import log_usage
 from Services.order_service import SIPARIS_TOOL
+from Services.ikas_service import URUN_ARA_TOOL
 from config import (
     OPENAI_API_KEY,
     MODEL_NAME,
@@ -115,8 +116,12 @@ def general_chat(
 
     ]
 
-    return _create_chat(messages,
-                        sender)
+    # urun_ara tool'u ile müşteri ürünü isimle de sorabilir
+    return _create_chat(
+        messages,
+        sender,
+        tools=[URUN_ARA_TOOL]
+    )
 
 def product_chat(
     system_prompt,
@@ -146,10 +151,16 @@ def product_chat(
 
     ]
 
+    # urun_ara her zaman verilir (isimle ürün sorgusu link akışına ek).
     # siparis_olustur tool'u yalnızca yeni sipariş alınabilir durumda verilir.
     # Sipariş zaten oluşturulmuşsa tool verilmez -> tekrar sipariş/grup gönderimi engellenir.
+    tools = [URUN_ARA_TOOL]
+
+    if include_order_tool:
+        tools.append(SIPARIS_TOOL)
+
     return _create_chat(
         messages,
         sender,
-        tools=[SIPARIS_TOOL] if include_order_tool else None
+        tools=tools
     )

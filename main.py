@@ -31,6 +31,7 @@ from Services.product_service import (
     build_ai_context,
     get_cached_ai_context
 )
+from Services.ikas_service import get_cached_ikas_context
 from Services.media_service import (
     download_whatsapp_media,
     transcribe_audio
@@ -122,6 +123,60 @@ def close_order_with_receipt(sender):
         sender,
         "Dekontunuz elimize ulaştı, siparişiniz hazırlanıp kargoya "
         "verilecek. Teşekkür ederiz 💕"
+    )
+
+
+def handle_urun_ara(sender, urun_ismi):
+
+    # Müşteri ürünü isimle sorduğunda İKAS'tan aranır; bulunursa aktif ürün yapılır.
+    try:
+
+        context, product_id = get_cached_ikas_context(urun_ismi)
+
+    except Exception as e:
+
+        print("IKAS SEARCH ERROR:", str(e))
+
+        return (
+            "Ürünü ararken kısa süreli bir teknik aksaklık oluştu 🙏 "
+            "Ürün ismini tekrar yazabilir ya da ürün linkini gönderebilir misiniz?"
+        )
+
+    if not context:
+
+        return (
+            f"\"{urun_ismi}\" ismiyle bir ürün bulamadım 🙏 Ürün ismini "
+            "biraz daha açık yazabilir ya da ürün linkini gönderebilir misiniz?"
+        )
+
+    # İKAS'tan bulunan ürün, link akışıyla aynı session yapısına (products/active_url) kaydedilir
+    product_key = f"ikas:{product_id}"
+
+    store_product(
+        chat_sessions[sender],
+        product_key,
+        context
+    )
+
+    chat_sessions[sender]["active_url"] = product_key
+    chat_sessions[sender]["order_state"] = None
+
+    detail = ""
+
+    if context.get("available_colors"):
+        detail += " Renkler: " + ", ".join(context["available_colors"]) + "."
+
+    if context.get("available_sizes"):
+        detail += " Bedenler: " + ", ".join(context["available_sizes"]) + "."
+
+    if context.get("discount_price"):
+        detail += f" Fiyatı {context['discount_price']} TL (indirimli)."
+    elif context.get("price"):
+        detail += f" Fiyatı {context['price']} TL."
+
+    return (
+        f"Buldum 😊 {context.get('name', '')}.{detail} "
+        "Bu ürünle ilgili sorularınızı sorabilirsiniz."
     )
 
 
@@ -375,7 +430,24 @@ async def whatsapp_webhook(request: Request):
                 sender
             )
 
-            assistant_answer = response["answer"]
+            tool_call = response.get("tool_call")
+
+            if tool_call and tool_call["name"] == "urun_ara":
+
+                assistant_answer = handle_urun_ara(
+                    sender,
+                    tool_call["arguments"].get("urun_ismi", message_text)
+                )
+
+            else:
+
+                assistant_answer = response["answer"]
+
+                if not assistant_answer:
+
+                    assistant_answer = (
+                        "Bu konuda size nasıl yardımcı olabilirim? 😊"
+                    )
 
             send_whatsapp_message(
                 sender,
@@ -461,6 +533,13 @@ async def whatsapp_webhook(request: Request):
                         "kargoya verilecek. Kargo takip numaranız mesaj olarak "
                         "tarafınıza iletilecek 💕"
                     )
+
+            elif tool_call and tool_call["name"] == "urun_ara":
+
+                assistant_answer = handle_urun_ara(
+                    sender,
+                    tool_call["arguments"].get("urun_ismi", message_text)
+                )
 
             else:
 
