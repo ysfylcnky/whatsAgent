@@ -145,6 +145,16 @@ def close_order_with_receipt(sender):
     )
 
 
+def _keep_or_reset_order_state(session):
+
+    # Ödeme bekleyen bir sipariş varsa (odeme_bekliyor) yeni ürüne geçiş bu durumu
+    # İPTAL ETMEZ — sipariş takibi bozulmasın, sadece ürün gezinmesi engellenmesin.
+    # Sipariş yoksa ya da zaten tamamlandıysa yeni ürün için sıfırlanır (aynı
+    # oturumda farklı bir ürün için yeni sipariş alınabilir).
+    if session.get("order_state") != "odeme_bekliyor":
+        session["order_state"] = None
+
+
 def activate_ikas_product(sender, product_id):
 
     # Seçilen ürünü (net eşleşme ya da müşterinin numaralı listeden seçimi) aktif ürün yapar.
@@ -167,7 +177,7 @@ def activate_ikas_product(sender, product_id):
     )
 
     chat_sessions[sender]["active_url"] = product_key
-    chat_sessions[sender]["order_state"] = None
+    _keep_or_reset_order_state(chat_sessions[sender])
     chat_sessions[sender]["pending_products"] = None
 
     detail = ""
@@ -472,8 +482,8 @@ async def whatsapp_webhook(request: Request):
 
             chat_sessions[sender]["active_url"] = product_key
 
-            # Yeni ürün gelince sipariş durumu sıfırlanır (aynı oturumda yeni sipariş alınabilir)
-            chat_sessions[sender]["order_state"] = None
+            # Ödeme bekleyen sipariş varsa yeni ürün linki bu durumu iptal etmez (bkz. _keep_or_reset_order_state)
+            _keep_or_reset_order_state(chat_sessions[sender])
 
             print(
                 "KAYDEDİLEN ÜRÜN:",

@@ -17,11 +17,13 @@ URUN_ARA_TOOL = {
     "function": {
         "name": "urun_ara",
         "description": (
-            "Müşteri bir ürünü İSİMLE sorduğunda/aradığında (link vermeden) çağır. "
-            "AKTİF ürün olsa da olmasa da geçerlidir: müşteri aktif üründen FARKLI "
-            "bir ürün adı söylerse (ör. aktif ürün abaya iken 'trençkot var mı' derse) "
-            "bunu reddetme, mutlaka bu aracı çağırıp o ürünü ara. "
-            "Ürün fiyat/renk/beden/stok bilgisi gerektiğinde bunu kullan."
+            "Müşteri bir ürünü İSİMLE sorduğunda/aradığında (link vermeden) çağır — "
+            "tek kelimelik kısa ürün adları da dahil (ör. 'panço', 'etek', 'kap'). "
+            "AKTİF ürün olsa da olmasa da, sipariş ödeme bekliyor olsa da geçerlidir: "
+            "müşteri aktif üründen FARKLI bir ürün adı söylerse (ör. aktif ürün abaya "
+            "iken 'trençkot var mı' ya da sipariş ödeme beklerken 'panço var mı' derse) "
+            "bunu reddetme, 'bilgim yok' / 'yardımcı olamam' DEME, mutlaka bu aracı "
+            "çağırıp o ürünü ara. Ürün fiyat/renk/beden/stok bilgisi gerektiğinde bunu kullan."
         ),
         "parameters": {
             "type": "object",
@@ -335,14 +337,47 @@ CLEAR_WINNER_MARGIN = 0.25
 # Skorlar birbirine yakınsa müşteriye en fazla bu kadar aday sunulur
 MAX_SUGGESTIONS = 3
 
+# "ÜRÜN ADI  - RENK" kalıbındaki son renk ekini yakalar (bu mağazada aynı ürünün
+# farklı renk odaklı kopyaları ayrı İKAS ürünü olarak kayıtlı olabiliyor)
+_COLOR_SUFFIX_RE = re.compile(r"\s+-\s+[^-]+$")
+
+
+def _strip_color_suffix(name):
+
+    return _COLOR_SUFFIX_RE.sub("", name or "").strip()
+
+
+def _dedupe_by_base_name(ranked):
+
+    # Aynı temel ürün adına (renk eki kırpılmış) sahip adayları tekilleştirir;
+    # skora göre zaten sıralı olduğundan her grubun en yüksek skorlusu kalır.
+    seen_bases = set()
+    deduped = []
+
+    for candidate in ranked:
+
+        base_norm = _normalize_tr(_strip_color_suffix(candidate["name"]))
+
+        if base_norm in seen_bases:
+            continue
+
+        seen_bases.add(base_norm)
+        deduped.append(candidate)
+
+    return deduped
+
 
 def resolve_product_search(name):
 
-    # Arama sonucunu tek karar noktasında toplar: bulunamadı / net eşleşme / çoklu aday
-    ranked = search_products_ranked(name, limit=5)
+    # Arama sonucunu tek karar noktasında toplar: bulunamadı / net eşleşme / çoklu aday.
+    # Dedup öncesi biraz daha geniş aday çekilir; aynı ürünün renk-ekli kopyaları
+    # üst sıraları doldurup gerçek bir ikinci ürünü dışarıda bırakmasın.
+    ranked = search_products_ranked(name, limit=10)
 
     if not ranked:
         return {"status": "not_found"}
+
+    ranked = _dedupe_by_base_name(ranked)
 
     if len(ranked) == 1:
         top = ranked[0]
