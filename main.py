@@ -24,7 +24,7 @@ from config import (
     MAX_HISTORY,
     SESSION_TIMEOUT,
     VERIFY_TOKEN,
-    WHATSAPP_GROUP_ID,
+    STORE_NOTIFY_PHONE,
     STORE_IBAN,
     STORE_IBAN_NAME,
 )
@@ -39,8 +39,7 @@ from Services.media_service import (
     transcribe_audio
 )
 from Services.whatsapp_service import (
-    send_whatsapp_message,
-    send_whatsapp_group_message
+    send_whatsapp_message
 )
 from Services.openai_service import (
     general_chat,
@@ -141,24 +140,24 @@ def looks_like_payment_done(text):
 def close_order_with_receipt(sender):
 
     # Havale/EFT siparişinde dekont gelince siparişi kapatır.
-    # Gruba kısa bilgi geçer ve müşteriye kapanış mesajı gönderir.
-    if WHATSAPP_GROUP_ID:
+    # Mağaza bildirim numarasına kısa bilgi geçer ve müşteriye kapanış mesajı gönderir.
+    if STORE_NOTIFY_PHONE:
 
         try:
 
-            send_whatsapp_group_message(
-                WHATSAPP_GROUP_ID,
+            send_whatsapp_message(
+                STORE_NOTIFY_PHONE,
                 "✅ Ödeme dekontu geldi."
             )
 
         except Exception as e:
 
-            # Grup gönderimi başarısız olsa bile akış kesilmez
-            print("GROUP SEND ERROR:", str(e))
+            # Bildirim gönderimi başarısız olsa bile akış kesilmez
+            print("NOTIFY SEND ERROR:", str(e))
 
     else:
 
-        print("⚠️ WHATSAPP_GROUP_ID tanımlı değil")
+        print("⚠️ STORE_NOTIFY_PHONE tanımlı değil")
 
     chat_sessions[sender]["order_state"] = "tamamlandi"
 
@@ -649,26 +648,26 @@ async def whatsapp_webhook(request: Request):
 
                 order = tool_call["arguments"]
 
-                group_message = format_order_message(order)
+                order_notify_message = format_order_message(order)
 
-                # Sipariş mağaza WhatsApp grubuna iletilir
-                if WHATSAPP_GROUP_ID:
+                # Sipariş mağaza WhatsApp numarasına (1:1 mesaj) iletilir
+                if STORE_NOTIFY_PHONE:
 
                     try:
 
-                        send_whatsapp_group_message(
-                            WHATSAPP_GROUP_ID,
-                            group_message
+                        send_whatsapp_message(
+                            STORE_NOTIFY_PHONE,
+                            order_notify_message
                         )
 
                     except Exception as e:
 
-                        # Grup gönderimi başarısız olsa bile akış kesilmez
-                        print("GROUP SEND ERROR:", str(e))
+                        # Bildirim gönderimi başarısız olsa bile akış kesilmez
+                        print("NOTIFY SEND ERROR:", str(e))
 
                 else:
 
-                    print("⚠️ WHATSAPP_GROUP_ID tanımlı değil")
+                    print("⚠️ STORE_NOTIFY_PHONE tanımlı değil")
 
                 # Müşteriye dönen bilgilendirme ve sipariş durumu ödeme türüne göre değişir
                 if order.get("odeme_sekli") == "Havale/EFT":

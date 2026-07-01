@@ -34,39 +34,3 @@ def send_whatsapp_message(to_number, message):
 
     print("STATUS:", response.status_code)
     print("RESPONSE:", response.text)
-
-
-def send_whatsapp_group_message(group_id, message):
-
-    # Grup mesajlaşması (recipient_type: "group") Meta Groups API'de v25.0+ gerektirir.
-    url = (
-        f"https://graph.facebook.com/v25.0/"
-        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
-    )
-
-    headers = {
-        "Authorization":
-            f"Bearer {WHATSAPP_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "group",
-        "to": group_id,
-        "type": "text",
-        "text": {
-            "body": message
-        }
-    }
-
-    response = requests.post(
-        url,
-        headers=headers,
-        json=payload
-    )
-
-    print("GROUP STATUS:", response.status_code)
-    print("GROUP RESPONSE:", response.text)
-
-    return response

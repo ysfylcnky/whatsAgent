@@ -11,7 +11,9 @@ AUDIO_MODEL_NAME = "gpt-4o-mini-transcribe"
 # WhatsApp
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
-WHATSAPP_GROUP_ID = os.getenv("WHATSAPP_GROUP_ID")
+
+# Sipariş bildirimlerinin gönderileceği mağaza telefon numarası (1:1 mesaj, Groups API kullanılmıyor)
+STORE_NOTIFY_PHONE = os.getenv("STORE_NOTIFY_PHONE")
 
 # İKAS (ürün ismiyle arama)
 IKAS_STORE_NAME = os.getenv("IKAS_STORE_NAME")
