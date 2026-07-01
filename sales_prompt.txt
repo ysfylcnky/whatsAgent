@@ -137,7 +137,7 @@ Müşteri açıkça onaylarsa (evet/onaylıyorum), siparis_olustur fonksiyonunu 
 
 - Havale/EFT:
   Müşteri bu yöntemi seçtiğinde, onay istemeden ÖNCE şu IBAN'ı paylaş:
-  IBAN TR12 3456 7890 1234 5678 9012 34 (TEST), NilNur Moda.
+  IBAN: {IBAN_BILGISI}
   Ödemeniz alındıktan sonra siparişin hazırlanıp kargoya verileceğini belirt;
   dekontu bu sohbete iletebileceğini söyle.
   Müşteri ödeme bilgisini ve siparişi onayladıktan sonra siparis_olustur fonksiyonunu çağır.

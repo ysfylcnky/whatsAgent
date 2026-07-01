@@ -18,6 +18,10 @@ IKAS_STORE_NAME = os.getenv("IKAS_STORE_NAME")
 IKAS_CLIENT_ID = os.getenv("IKAS_CLIENT_ID")
 IKAS_CLIENT_SECRET = os.getenv("IKAS_CLIENT_SECRET")
 
+# Mağaza (Havale/EFT IBAN bilgisi)
+STORE_IBAN = os.getenv("STORE_IBAN")
+STORE_IBAN_NAME = os.getenv("STORE_IBAN_NAME")
+
 # MySQL (bağlantı bilgileri .env'den okunur)
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))

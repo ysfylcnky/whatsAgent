@@ -25,6 +25,8 @@ from config import (
     SESSION_TIMEOUT,
     VERIFY_TOKEN,
     WHATSAPP_GROUP_ID,
+    STORE_IBAN,
+    STORE_IBAN_NAME,
 )
 from Services.ikas_service import (
     get_cached_ikas_context,
@@ -52,6 +54,12 @@ from Services.dashboard_service import get_dashboard_data
 
 with open("sales_prompt.txt", "r", encoding="utf-8") as f:
     system_prompt = f.read()
+
+# Havale/EFT IBAN bilgisi prompt'a .env üzerinden enjekte edilir (gerçek IBAN dosyada tutulmaz)
+system_prompt = system_prompt.replace(
+    "{IBAN_BILGISI}",
+    f"{STORE_IBAN} - {STORE_IBAN_NAME}"
+)
 general_prompt = open(
     "general_prompt.txt",
     encoding="utf-8"
