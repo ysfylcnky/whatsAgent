@@ -46,6 +46,7 @@ query SearchProducts($input: SearchInput!) {
         variantType {
           id
           name
+          selectionType
           values {
             id
             name
@@ -60,6 +61,7 @@ query SearchProducts($input: SearchInput!) {
         }
         stocks {
           stockCount
+          stockLocationId
         }
         variantValues {
           variantTypeId
@@ -392,34 +394,91 @@ def match_candidate_by_text(text, candidates):
     return best
 
 
+# selectionType eksik geldiğinde (ya da belirsiz kaldığında) isme düşülür.
+# Mağazaya özgü yazımları da (RENKK, BEDENN) kapsar — tip ADINA güvenmek yerine
+# yalnızca selectionType yokken son çare olarak kullanılır.
+COLOR_TYPE_NAME_HINTS = ("renk", "renkk", "color", "colour")
+SIZE_TYPE_NAME_HINTS = ("beden", "bedenn", "size", "numara", "olcu")
+
+
+def _classify_variant_types(variant_types):
+
+    # Varyant tiplerini isme değil selectionType'a göre ayırır (COLOR/CHOICE).
+    # Renk = selectionType == COLOR olan tip. Beden = renk dışındaki tip
+    # (öncelik: isim eşleşmesi, sonra tek CHOICE tip, sonra kalan tek tip).
+    color_type = None
+    other_types = []
+
+    for entry in variant_types:
+
+        variant_type = (entry or {}).get("variantType") or {}
+        selection_type = (variant_type.get("selectionType") or "").strip().upper()
+        name_norm = _normalize_tr(variant_type.get("name", ""))
+
+        is_color = selection_type == "COLOR" or (
+            not selection_type and name_norm in COLOR_TYPE_NAME_HINTS
+        )
+
+        if is_color and color_type is None:
+            color_type = variant_type
+        else:
+            other_types.append(variant_type)
+
+    size_type = None
+
+    # 1) İsimden beden tipini yakala (RENKK/BEDENN gibi mağazaya özgü adlar dahil)
+    for variant_type in other_types:
+
+        if _normalize_tr(variant_type.get("name", "")) in SIZE_TYPE_NAME_HINTS:
+            size_type = variant_type
+            break
+
+    if size_type is None:
+
+        choice_types = [
+            vt for vt in other_types
+            if (vt.get("selectionType") or "").strip().upper() == "CHOICE"
+        ]
+
+        if len(choice_types) == 1:
+            size_type = choice_types[0]
+
+        elif choice_types:
+            size_type = choice_types[0]
+
+        elif len(other_types) == 1:
+            # selectionType hiç verilmemişse ve renk dışında tek tip varsa yine beden say
+            size_type = other_types[0]
+
+    return color_type, size_type
+
+
 def build_ikas_ai_context(product):
 
     variant_types = product.get("productVariantTypes") or []
 
+    color_type, size_type = _classify_variant_types(variant_types)
+
+    color_type_id = color_type.get("id") if color_type else None
+    size_type_id = size_type.get("id") if size_type else None
+
     colors = []
     sizes = []
-    color_type_ids = set()
-    size_type_ids = set()
     value_name_map = {}
 
     for entry in variant_types:
 
         variant_type = (entry or {}).get("variantType") or {}
-        type_name_norm = _normalize_tr(variant_type.get("name", ""))
         values = variant_type.get("values") or []
 
         for value in values:
             value_name_map[value.get("id")] = (value.get("name") or "").strip(".")
 
-        if type_name_norm in ("renk", "color", "colour"):
-
+        if variant_type.get("id") == color_type_id:
             colors = [(v.get("name") or "").strip(".") for v in values]
-            color_type_ids.add(variant_type.get("id"))
 
-        elif type_name_norm in ("beden", "size", "numara"):
-
+        if variant_type.get("id") == size_type_id:
             sizes = [(v.get("name") or "") for v in values]
-            size_type_ids.add(variant_type.get("id"))
 
     color_map = {}
 
@@ -438,10 +497,10 @@ def build_ikas_ai_context(product):
             if value_name is None:
                 continue
 
-            if vv.get("variantTypeId") in color_type_ids:
+            if vv.get("variantTypeId") == color_type_id:
                 color = value_name
 
-            elif vv.get("variantTypeId") in size_type_ids:
+            elif vv.get("variantTypeId") == size_type_id:
                 size = value_name
 
         if color not in color_map:
@@ -479,6 +538,30 @@ def build_ikas_ai_context(product):
         "available_sizes": sizes,
         "variants": variants
     }
+
+
+def debug_dump_product(query, by_id=False):
+
+    # GEÇİCİ DEBUG: Bilinen bir ürünü çekip İKAS'tan dönen HAM yapıyı (productVariantTypes,
+    # variants) ve düzeltilmiş mapping'i ekrana basar. Renk/beden mapping sorunlarını
+    # teşhis etmek içindir; normal akışta kullanılmaz. Bkz. debug_ikas_product.py.
+    product = get_product_by_id(query) if by_id else search_product_by_name(query)
+
+    if not product:
+        print(f"DEBUG: '{query}' için ürün bulunamadı")
+        return None
+
+    import json as _json
+
+    print("DEBUG HAM İKAS ÜRÜN YAPISI:")
+    print(_json.dumps(product, ensure_ascii=False, indent=2))
+
+    context = build_ikas_ai_context(product)
+
+    print("DEBUG DÜZELTİLMİŞ MAPPING:")
+    print(_json.dumps(context, ensure_ascii=False, indent=2))
+
+    return product, context
 
 
 def get_cached_ikas_context(urun_ismi):
