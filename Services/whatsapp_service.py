@@ -38,9 +38,9 @@ def send_whatsapp_message(to_number, message):
 
 def send_whatsapp_group_message(group_id, message):
 
-    # Grup gönderiminde hata olursa API sürümünü v25.0 yap.
+    # Grup mesajlaşması (recipient_type: "group") Meta Groups API'de v25.0+ gerektirir.
     url = (
-        f"https://graph.facebook.com/v23.0/"
+        f"https://graph.facebook.com/v25.0/"
         f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
     )
 

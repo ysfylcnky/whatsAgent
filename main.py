@@ -79,6 +79,30 @@ def extract_url(text):
     return None
 
 
+def extract_group_id(value, message):
+
+    # WhatsApp Groups API'den gelen bir mesajsa (gruba özgü bir id alanı taşır),
+    # bu id'yi döndürür; normal 1:1 müşteri mesajıysa None döner.
+    # NOT: Meta'nın kesin alan adı canlı bir grup mesajıyla doğrulanmalı; olası
+    # birkaç konum kontrol edilir. Ham webhook gövdesi zaten yukarıda tam
+    # loglanıyor, gerekirse gerçek alan adını oradan teyit edip güncelleyin.
+    for source in (message, value):
+
+        if not isinstance(source, dict):
+            continue
+
+        for key in ("group_id", "groupId", "group"):
+
+            candidate = source.get(key)
+
+            if not candidate:
+                continue
+
+            return candidate if isinstance(candidate, str) else candidate.get("id")
+
+    return None
+
+
 def slug_to_query(url):
 
     # Linkin son yol parçasından (slug) İKAS'ta aranabilir bir ürün adı çıkarır
@@ -373,6 +397,18 @@ async def whatsapp_webhook(request: Request):
             ["changes"][0]
             ["value"]["messages"][0]
         )
+
+        # Grup mesajı ise (WhatsApp Groups API) müşteri mesajı gibi İŞLENMEZ:
+        # AI'ya gönderilmez, yanıt verilmez; yalnızca group_id net loglanır
+        # (gerçek GROUP_ID'yi buradan da teyit edebilirsiniz).
+        group_id = extract_group_id(value, message)
+
+        if group_id:
+
+            print(f"👥 GRUP MESAJI ALGILANDI — group_id: {group_id} "
+                  "(müşteri akışına girmedi, yanıt verilmedi)")
+
+            return {"status": "ok"}
 
         message_id = message["id"]
 
