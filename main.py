@@ -28,7 +28,9 @@ from config import (
 )
 from Services.ikas_service import (
     get_cached_ikas_context,
-    get_cached_ikas_context_by_id
+    get_cached_ikas_context_by_id,
+    resolve_product_search,
+    match_candidate_by_text
 )
 from Services.media_service import (
     download_whatsapp_media,
@@ -135,27 +137,16 @@ def close_order_with_receipt(sender):
     )
 
 
-def handle_urun_ara(sender, urun_ismi):
+def activate_ikas_product(sender, product_id):
 
-    # Müşteri ürünü isimle sorduğunda İKAS'tan aranır; bulunursa aktif ürün yapılır.
-    try:
-
-        context, product_id = get_cached_ikas_context(urun_ismi)
-
-    except Exception as e:
-
-        print("IKAS SEARCH ERROR:", str(e))
-
-        return (
-            "Ürünü ararken kısa süreli bir teknik aksaklık oluştu 🙏 "
-            "Ürün ismini tekrar yazabilir ya da ürün linkini gönderebilir misiniz?"
-        )
+    # Seçilen ürünü (net eşleşme ya da müşterinin numaralı listeden seçimi) aktif ürün yapar.
+    context = get_cached_ikas_context_by_id(product_id)
 
     if not context:
 
         return (
-            f"\"{urun_ismi}\" ismiyle bir ürün bulamadım 🙏 Ürün ismini "
-            "biraz daha açık yazabilir ya da ürün linkini gönderebilir misiniz?"
+            "Ürün bilgisine şu anda ulaşamadım 🙏 Ürün ismini tekrar "
+            "yazabilir misiniz?"
         )
 
     # İKAS'tan bulunan ürün, link akışıyla aynı session yapısına (products/active_url) kaydedilir
@@ -169,6 +160,7 @@ def handle_urun_ara(sender, urun_ismi):
 
     chat_sessions[sender]["active_url"] = product_key
     chat_sessions[sender]["order_state"] = None
+    chat_sessions[sender]["pending_products"] = None
 
     detail = ""
 
@@ -187,6 +179,82 @@ def handle_urun_ara(sender, urun_ismi):
         f"Buldum 😊 {context.get('name', '')}.{detail} "
         "Bu ürünle ilgili sorularınızı sorabilirsiniz."
     )
+
+
+def handle_urun_ara(sender, urun_ismi):
+
+    # Müşteri ürünü isimle sorduğunda İKAS'tan aranır (aktif ürün olsa da olmasa da).
+    try:
+
+        result = resolve_product_search(urun_ismi)
+
+    except Exception as e:
+
+        print("IKAS SEARCH ERROR:", str(e))
+
+        return (
+            "Ürünü ararken kısa süreli bir teknik aksaklık oluştu 🙏 "
+            "Ürün ismini tekrar yazabilir ya da ürün linkini gönderebilir misiniz?"
+        )
+
+    if result["status"] == "not_found":
+
+        chat_sessions[sender]["pending_products"] = None
+
+        return (
+            f"\"{urun_ismi}\" ismiyle bir ürün bulamadım 🙏 Ürün ismini "
+            "biraz daha açık yazabilir ya da ürün linkini gönderebilir misiniz?"
+        )
+
+    if result["status"] == "multiple":
+
+        # Aktif ürün henüz değiştirilmez; müşterinin seçimi bir sonraki mesajda işlenir.
+        chat_sessions[sender]["pending_products"] = result["candidates"]
+
+        lines = [
+            f"{i + 1}) {candidate['name']}"
+            for i, candidate in enumerate(result["candidates"])
+        ]
+
+        return (
+            "Birkaç ürün buldum, hangisini kastediyorsunuz? 😊\n"
+            + "\n".join(lines)
+        )
+
+    return activate_ikas_product(sender, result["product_id"])
+
+
+def try_resolve_pending_selection(sender, message_text):
+
+    # pending_products doluysa müşterinin mesajını seçim olarak yorumlar.
+    # Eşleşirse ürünü aktif yapıp yanıt metnini döndürür (mesaj tüketilmiştir).
+    # Eşleşmezse bekleyen listeyi iptal edip None döner (normal akışa devam edilir).
+    pending = chat_sessions[sender].get("pending_products")
+
+    if not pending:
+        return None
+
+    stripped = message_text.strip()
+
+    number_match = re.match(r"^\s*(\d+)", stripped)
+
+    if number_match:
+
+        index = int(number_match.group(1)) - 1
+
+        if 0 <= index < len(pending):
+            return activate_ikas_product(sender, pending[index]["id"])
+
+        chat_sessions[sender]["pending_products"] = None
+        return None
+
+    matched = match_candidate_by_text(stripped, pending)
+
+    if matched:
+        return activate_ikas_product(sender, matched["id"])
+
+    chat_sessions[sender]["pending_products"] = None
+    return None
 
 
 def cleanup_sessions():
@@ -346,13 +414,31 @@ async def whatsapp_webhook(request: Request):
                 "products": {},
                 "active_url": None,
                 "order_state": None,
+                "pending_products": None,
                 "last_activity": time.time()
             }
         chat_sessions[sender]["last_activity"] = time.time()
 
         url = extract_url(message_text)
 
+        # Bekleyen ürün adayı listesi varsa (link gelmediği sürece) mesaj önce seçim olarak yorumlanır
+        if not url:
+
+            pending_answer = try_resolve_pending_selection(sender, message_text)
+
+            if pending_answer is not None:
+
+                send_whatsapp_message(
+                    sender,
+                    pending_answer
+                )
+
+                return {"status": "ok"}
+
         if url:
+
+            # Link ile yeni ürün açılınca bekleyen aday listesi geçersizleşir
+            chat_sessions[sender]["pending_products"] = None
 
             # Link akışı da tek kaynağa (İKAS) akar: slug'dan çıkarılan isimle aranır
             search_query = slug_to_query(url)

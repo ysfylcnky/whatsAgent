@@ -18,6 +18,9 @@ URUN_ARA_TOOL = {
         "name": "urun_ara",
         "description": (
             "Müşteri bir ürünü İSİMLE sorduğunda/aradığında (link vermeden) çağır. "
+            "AKTİF ürün olsa da olmasa da geçerlidir: müşteri aktif üründen FARKLI "
+            "bir ürün adı söylerse (ör. aktif ürün abaya iken 'trençkot var mı' derse) "
+            "bunu reddetme, mutlaka bu aracı çağırıp o ürünü ara. "
             "Ürün fiyat/renk/beden/stok bilgisi gerektiğinde bunu kullan."
         ),
         "parameters": {
@@ -253,12 +256,13 @@ def get_product_by_id(product_id):
     return results[0] if results else None
 
 
-def search_product_by_name(name):
+def _get_scored_candidates(name):
 
+    # Sorguya göre skorlanmış (skor, ürün) çiftlerini yüksekten düşüğe sıralı döndürür
     query_words = _meaningful_words(name)
 
     if not query_words:
-        return None
+        return []
 
     candidates = _search_raw(
         {
@@ -274,23 +278,31 @@ def search_product_by_name(name):
         candidates = _list_product_name_candidates()
 
     if not candidates:
-        return None
+        return []
 
-    best_product = None
-    best_score = 0.0
+    scored = []
 
     for product in candidates:
 
         name_words = _meaningful_words(product.get("name", ""))
         score = _score_match(query_words, name_words)
 
-        if score > best_score:
-            best_score = score
-            best_product = product
+        if score > 0:
+            scored.append((score, product))
 
-    # Sorgudaki hiçbir anlamlı kelime hiçbir adayla eşleşmediyse bulunamadı sayılır
-    if best_product is None or best_score <= 0:
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    return scored
+
+
+def search_product_by_name(name):
+
+    scored = _get_scored_candidates(name)
+
+    if not scored:
         return None
+
+    best_product = scored[0][1]
 
     # Aday listProduct'tan (yalnızca id/name) geldiyse ya da varyant verisi eksikse
     # seçilen ürünün tam verisi id ile yeniden çekilir.
@@ -298,6 +310,86 @@ def search_product_by_name(name):
         return get_product_by_id(best_product.get("id"))
 
     return best_product
+
+
+def search_products_ranked(name, limit=5):
+
+    # En fazla `limit` adayı {id, name, score} olarak, yüksekten düşüğe sıralı döndürür
+    scored = _get_scored_candidates(name)
+
+    return [
+        {
+            "id": product.get("id"),
+            "name": product.get("name", ""),
+            "score": score
+        }
+        for score, product in scored[:limit]
+    ]
+
+
+# En yüksek skor ikinciden bu kadar (ya da daha fazla) yüksekse "net eşleşme" sayılır
+CLEAR_WINNER_MARGIN = 0.25
+
+# Skorlar birbirine yakınsa müşteriye en fazla bu kadar aday sunulur
+MAX_SUGGESTIONS = 3
+
+
+def resolve_product_search(name):
+
+    # Arama sonucunu tek karar noktasında toplar: bulunamadı / net eşleşme / çoklu aday
+    ranked = search_products_ranked(name, limit=5)
+
+    if not ranked:
+        return {"status": "not_found"}
+
+    if len(ranked) == 1:
+        top = ranked[0]
+        return {"status": "single", "product_id": top["id"], "name": top["name"]}
+
+    top_score = ranked[0]["score"]
+    second_score = ranked[1]["score"]
+
+    if top_score - second_score >= CLEAR_WINNER_MARGIN:
+        top = ranked[0]
+        return {"status": "single", "product_id": top["id"], "name": top["name"]}
+
+    close_candidates = [
+        c for c in ranked
+        if top_score - c["score"] <= CLEAR_WINNER_MARGIN
+    ][:MAX_SUGGESTIONS]
+
+    if len(close_candidates) == 1:
+        top = close_candidates[0]
+        return {"status": "single", "product_id": top["id"], "name": top["name"]}
+
+    return {"status": "multiple", "candidates": close_candidates}
+
+
+def match_candidate_by_text(text, candidates):
+
+    # pending_products listesinden müşterinin mesajına en uygun adayı seçer (yoksa None)
+    words = _meaningful_words(text)
+
+    if not words:
+        return None
+
+    best = None
+    best_score = 0.0
+
+    for candidate in candidates:
+
+        name_words = _meaningful_words(candidate.get("name", ""))
+        score = _score_match(words, name_words)
+
+        if score > best_score:
+            best_score = score
+            best = candidate
+
+    # Belirsiz/zayıf eşleşmeleri (yanlış pozitif) elemek için asgari skor aranır
+    if best is None or best_score < 0.5:
+        return None
+
+    return best
 
 
 def build_ikas_ai_context(product):
