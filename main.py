@@ -16,6 +16,7 @@ from fastapi.responses import PlainTextResponse
 import json
 import time
 import re
+from urllib.parse import urlparse
 from Services.session_service import (
     store_product,
     build_products_block
@@ -111,6 +112,46 @@ def slug_to_query(url):
     slug = path.rsplit("/", 1)[-1]
 
     return slug.replace("-", " ").replace("_", " ").strip()
+
+
+# Bu alan adlarındaki linklerin slug'ı ürün adı içermez (Instagram post linki vb.);
+# bu linkler İKAS'ta ARANMAZ. Mağazanın kendi ürün linkleri slug→İKAS ile çalışmaya devam eder.
+SOCIAL_MEDIA_DOMAINS = (
+    "instagram.com",
+    "facebook.com",
+    "fb.me",
+    "fb.watch",
+    "m.me"
+)
+
+
+def is_social_media_url(url):
+
+    host = urlparse(url).netloc.lower().split(":")[0]
+
+    return any(
+        host == domain or host.endswith("." + domain)
+        for domain in SOCIAL_MEDIA_DOMAINS
+    )
+
+
+def build_referral_search_text(message_text, referral):
+
+    # Meta Click-to-WhatsApp reklamında ürün adı reklamın headline/body metnindedir;
+    # mesajdaki linkler (Instagram post linki) ürün adı içermediği için çıkarılır.
+    text_without_urls = re.sub(
+        r"https?://[^\s]+",
+        " ",
+        message_text or ""
+    )
+
+    parts = [
+        text_without_urls,
+        referral.get("headline") or "",
+        referral.get("body") or ""
+    ]
+
+    return " ".join(p.strip() for p in parts if p and p.strip()).strip()
 
 
 def looks_like_payment_done(text):
@@ -263,6 +304,55 @@ def handle_urun_ara(sender, urun_ismi):
         )
 
     return activate_ikas_product(sender, result["product_id"])
+
+
+REFERRAL_ASK_PRODUCT_MESSAGE = (
+    "Hoş geldiniz 😊 Hangi ürünle ilgilenmiştiniz? "
+    "Ürünün ismini yazabilir misiniz?"
+)
+
+
+def handle_referral_search(sender, search_text):
+
+    # Meta reklamından (Click-to-WhatsApp) gelen ilk mesajda reklam metninden
+    # (headline/body) ürün aranır. Net eşleşmede isimle bulma akışının aynısı
+    # uygulanır; bulunamazsa nazikçe ürün adı istenir.
+    if not search_text:
+
+        chat_sessions[sender]["pending_products"] = None
+        return REFERRAL_ASK_PRODUCT_MESSAGE
+
+    try:
+
+        result = resolve_product_search(search_text)
+
+    except Exception as e:
+
+        print("IKAS REFERRAL SEARCH ERROR:", str(e))
+
+        chat_sessions[sender]["pending_products"] = None
+        return REFERRAL_ASK_PRODUCT_MESSAGE
+
+    if result["status"] == "single":
+        return activate_ikas_product(sender, result["product_id"])
+
+    if result["status"] == "multiple":
+
+        # Aktif ürün henüz değiştirilmez; müşterinin seçimi bir sonraki mesajda işlenir.
+        chat_sessions[sender]["pending_products"] = result["candidates"]
+
+        lines = [
+            f"{i + 1}) {candidate['name']}"
+            for i, candidate in enumerate(result["candidates"])
+        ]
+
+        return (
+            "Hoş geldiniz 😊 Birkaç ürün buldum, hangisini kastediyorsunuz?\n"
+            + "\n".join(lines)
+        )
+
+    chat_sessions[sender]["pending_products"] = None
+    return REFERRAL_ASK_PRODUCT_MESSAGE
 
 
 def try_resolve_pending_selection(sender, message_text):
@@ -474,8 +564,24 @@ async def whatsapp_webhook(request: Request):
 
         url = extract_url(message_text)
 
-        # Bekleyen ürün adayı listesi varsa (link gelmediği sürece) mesaj önce seçim olarak yorumlanır
-        if not url:
+        # Meta Click-to-WhatsApp reklamından gelen İLK mesaj referral taşır
+        # (value.messages[0].referral); ürün adı reklamın headline/body
+        # metnindedir, linkte değil. Sonraki mesajlarda referral gelmez.
+        referral = message.get("referral")
+
+        if referral:
+
+            print(
+                "📣 META REKLAM REFERRAL — "
+                f"source_type: {referral.get('source_type')}, "
+                f"source_id: {referral.get('source_id')}, "
+                f"ctwa_clid: {referral.get('ctwa_clid')}"
+            )
+
+        social_url = url is not None and is_social_media_url(url)
+
+        # Bekleyen ürün adayı listesi varsa (link/referral gelmediği sürece) mesaj önce seçim olarak yorumlanır
+        if not url and not referral:
 
             pending_answer = try_resolve_pending_selection(sender, message_text)
 
@@ -487,6 +593,34 @@ async def whatsapp_webhook(request: Request):
                 )
 
                 return {"status": "ok"}
+
+        # Sosyal medya linkinin slug'ı İKAS'ta aranmaz: referral varsa reklam
+        # metninden ürün bulunur, yoksa nazikçe ürün adı istenir. Mağazanın
+        # kendi ürün linki gelirse aşağıdaki slug akışı önceliklidir.
+        if social_url or (referral and not url):
+
+            chat_sessions[sender]["pending_products"] = None
+
+            if referral:
+
+                assistant_answer = handle_referral_search(
+                    sender,
+                    build_referral_search_text(message_text, referral)
+                )
+
+            else:
+
+                assistant_answer = (
+                    "Bu linkteki ürünü göremiyorum 🙏 Hangi ürünle "
+                    "ilgilenmiştiniz? Ürünün ismini yazabilir misiniz?"
+                )
+
+            send_whatsapp_message(
+                sender,
+                assistant_answer
+            )
+
+            return {"status": "ok"}
 
         if url:
 
