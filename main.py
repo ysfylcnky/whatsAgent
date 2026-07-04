@@ -33,7 +33,8 @@ from Services.ikas_service import (
     get_cached_ikas_context,
     get_cached_ikas_context_by_id,
     resolve_product_search,
-    match_candidate_by_text
+    match_candidate_by_text,
+    _normalize_tr
 )
 from Services.media_service import (
     download_whatsapp_media,
@@ -219,9 +220,10 @@ def _keep_or_reset_order_state(session):
         session["order_state"] = None
 
 
-def activate_ikas_product(sender, product_id):
+def activate_ikas_product(sender, product_id, intro="Buldum 😊"):
 
     # Seçilen ürünü (net eşleşme ya da müşterinin numaralı listeden seçimi) aktif ürün yapar.
+    # intro: yanıtın giriş cümlesi (düzeltme akışında "... geçiyorum 😊" gibi değişir).
     context = get_cached_ikas_context_by_id(product_id)
 
     if not context:
@@ -258,7 +260,7 @@ def activate_ikas_product(sender, product_id):
         detail += f" Fiyatı {context['price']} TL."
 
     return (
-        f"Buldum 😊 {context.get('name', '')}.{detail} "
+        f"{intro} {context.get('name', '')}.{detail} "
         "Bu ürünle ilgili sorularınızı sorabilirsiniz."
     )
 
@@ -291,7 +293,10 @@ def handle_urun_ara(sender, urun_ismi):
     if result["status"] == "multiple":
 
         # Aktif ürün henüz değiştirilmez; müşterinin seçimi bir sonraki mesajda işlenir.
+        # last_candidates seçimden SONRA da saklanır ki müşteri "yanlış söyledim,
+        # iki numaraymış" gibi düzeltmelerle listeye geri dönebilsin.
         chat_sessions[sender]["pending_products"] = result["candidates"]
+        chat_sessions[sender]["last_candidates"] = result["candidates"]
 
         lines = [
             f"{i + 1}) {candidate['name']}"
@@ -340,6 +345,7 @@ def handle_referral_search(sender, search_text):
 
         # Aktif ürün henüz değiştirilmez; müşterinin seçimi bir sonraki mesajda işlenir.
         chat_sessions[sender]["pending_products"] = result["candidates"]
+        chat_sessions[sender]["last_candidates"] = result["candidates"]
 
         lines = [
             f"{i + 1}) {candidate['name']}"
@@ -386,6 +392,143 @@ def try_resolve_pending_selection(sender, message_text):
 
     chat_sessions[sender]["pending_products"] = None
     return None
+
+
+# Sıra sözcükleri önek olarak eşlenir ki ek varyasyonları da yakalansın
+# ("ikincisi", "ikinciydi", "ikinciymiş" → "ikinci").
+ORDINAL_PREFIXES = (
+    ("birinci", 1),
+    ("ikinci", 2),
+    ("ucuncu", 3),
+    ("dorduncu", 4),
+    ("besinci", 5)
+)
+
+NUMBER_WORDS = {
+    "bir": 1,
+    "iki": 2,
+    "uc": 3,
+    "dort": 4,
+    "bes": 5
+}
+
+# Düzeltme niyetine işaret eden sözcükler (normalize edilmiş halleriyle);
+# uzun cümlelerde liste referansı ancak bu ipuçlarından biriyle kabul edilir.
+CORRECTION_CUES = (
+    "yanlis",
+    "pardon",
+    "aslinda",
+    "hayir",
+    "degil",
+    "ozur",
+    "kusura",
+    "affedersin",
+    "sehven"
+)
+
+
+def _extract_list_reference(norm_text, candidate_count):
+
+    # Normalize edilmiş mesajdan numaralı liste referansı (1 tabanlı indeks) çıkarır.
+    # BİLİNÇLİ olarak çıplak sayılar ("2") ve birimli sayılar ("2 adet", "44 beden")
+    # referans SAYILMAZ — sipariş/beden akışındaki sayılarla karışmasın.
+    words = re.findall(r"[a-z0-9]+", norm_text)
+
+    # "ikincisi", "aslında birincisi", "üçüncü olsun" gibi sıra sözcükleri
+    for word in words:
+
+        if word == "ilki" and candidate_count >= 1:
+            return 1
+
+        for prefix, index in ORDINAL_PREFIXES:
+
+            if word.startswith(prefix) and index <= candidate_count:
+                return index
+
+    # "2 numara", "2 numaraymış", "2 nolu", "2 no"
+    match = re.search(r"\b(\d{1,2})\s*(?:numara\w*|nolu|no)\b", norm_text)
+
+    if match:
+
+        index = int(match.group(1))
+
+        return index if 1 <= index <= candidate_count else None
+
+    # "iki numara", "iki numaraymış"
+    match = re.search(
+        r"\b(bir|iki|uc|dort|bes)\s*(?:numara\w*|nolu|no)\b",
+        norm_text
+    )
+
+    if match:
+
+        index = NUMBER_WORDS[match.group(1)]
+
+        return index if index <= candidate_count else None
+
+    # "numara 2", "no 2"
+    match = re.search(r"\b(?:numara|no)\s*[:.]?\s*(\d{1,2})\b", norm_text)
+
+    if match:
+
+        index = int(match.group(1))
+
+        return index if 1 <= index <= candidate_count else None
+
+    return None
+
+
+def try_resolve_candidate_correction(sender, message_text):
+
+    # Son gösterilen numaralı listeye yapılan seçim/düzeltme atıflarını yakalar
+    # ("2 numara", "ikincisi", "yanlış söyledim iki numaraymış", "diğeri").
+    # pending_products akışından farkı: seçim yapıldıktan SONRA da çalışır
+    # (last_candidates yeni bir liste sunulana kadar saklanır).
+    session = chat_sessions[sender]
+
+    candidates = session.get("last_candidates")
+
+    if not candidates:
+        return None
+
+    norm = _normalize_tr(message_text)
+    words = re.findall(r"[a-z0-9]+", norm)
+
+    has_cue = any(
+        word.startswith(cue)
+        for word in words
+        for cue in CORRECTION_CUES
+    )
+
+    # Uzun/serbest cümlelerde ("ikinci sorum şu..." gibi) yanlış tetiklemeyi
+    # önlemek için açık bir düzeltme ipucu aranır.
+    if len(words) > 8 and not has_cue:
+        return None
+
+    index = _extract_list_reference(norm, len(candidates))
+
+    # "diğeri / öbürü": iki adaylı listede aktif olmayan ürünü işaret eder
+    if index is None and len(candidates) == 2 and re.search(r"\b(digeri|oburu)\b", norm):
+
+        active_url = session.get("active_url") or ""
+
+        if active_url.startswith("ikas:"):
+
+            current_id = active_url.split("ikas:", 1)[1]
+
+            candidate_ids = [c.get("id") for c in candidates]
+
+            if current_id in candidate_ids:
+                index = 2 if candidate_ids[0] == current_id else 1
+
+    if index is None:
+        return None
+
+    return activate_ikas_product(
+        sender,
+        candidates[index - 1]["id"],
+        intro=f"Tabii, {index} numaralı ürüne geçiyorum 😊"
+    )
 
 
 def cleanup_sessions():
@@ -558,6 +701,7 @@ async def whatsapp_webhook(request: Request):
                 "active_url": None,
                 "order_state": None,
                 "pending_products": None,
+                "last_candidates": None,
                 "last_activity": time.time()
             }
         chat_sessions[sender]["last_activity"] = time.time()
@@ -590,6 +734,19 @@ async def whatsapp_webhook(request: Request):
                 send_whatsapp_message(
                     sender,
                     pending_answer
+                )
+
+                return {"status": "ok"}
+
+            # Seçim yapıldıktan sonra da düzeltme mümkündür:
+            # "pardon yanlış söyledim iki numaraymış", "ikincisi", "diğeri"
+            correction_answer = try_resolve_candidate_correction(sender, message_text)
+
+            if correction_answer is not None:
+
+                send_whatsapp_message(
+                    sender,
+                    correction_answer
                 )
 
                 return {"status": "ok"}
