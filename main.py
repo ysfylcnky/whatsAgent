@@ -23,6 +23,7 @@ from Services.session_service import (
 )
 from config import (
     MAX_HISTORY,
+    LONG_SESSION_MESSAGE_LIMIT,
     SESSION_TIMEOUT,
     VERIFY_TOKEN,
     STORE_NOTIFY_PHONE,
@@ -531,6 +532,48 @@ def try_resolve_candidate_correction(sender, message_text):
     )
 
 
+def refresh_transient_state(session, reset_history=False):
+
+    # Uzayan sohbetlerdeki eski gürültüyü atar: aktif ürün dışındaki ürünler ve
+    # bekleyen aday listeleri temizlenir, tamamlanmış sipariş durumu sıfırlanır.
+    # Ödeme bekleyen sipariş (odeme_bekliyor) ve aktif ürün KORUNUR — aktif akış bozulmaz.
+    active_url = session.get("active_url")
+
+    session["products"] = {
+        key: context
+        for key, context in session["products"].items()
+        if key == active_url
+    }
+
+    session["pending_products"] = None
+    session["last_candidates"] = None
+
+    if session.get("order_state") != "odeme_bekliyor":
+        session["order_state"] = None
+
+    if reset_history:
+        session["history"] = []
+
+
+# Yalnızca selamlamadan ibaret mesajları yakalamak için (normalize edilmiş halleriyle)
+GREETING_WORDS = {
+    "merhaba", "merhabalar", "selam", "selamlar", "slm", "mrb",
+    "gunaydin", "iyi", "gunler", "aksamlar", "geceler",
+    "selamunaleykum", "aleykumselam", "hello", "hi", "hey",
+    "hayirli", "isler", "kolay", "gelsin"
+}
+
+
+def is_fresh_greeting(text):
+
+    # Mesaj kısa ve yalnızca selamlama sözcüklerinden oluşuyorsa True
+    # (ör. "Merhaba", "selam iyi günler"). "merhaba bu ürün var mı" gibi
+    # içerikli mesajlar selamlama SAYILMAZ.
+    words = re.findall(r"[a-z]+", _normalize_tr(text))
+
+    return 0 < len(words) <= 4 and all(w in GREETING_WORDS for w in words)
+
+
 def cleanup_sessions():
     now = time.time()
 
@@ -702,9 +745,33 @@ async def whatsapp_webhook(request: Request):
                 "order_state": None,
                 "pending_products": None,
                 "last_candidates": None,
+                "message_count": 0,
                 "last_activity": time.time()
             }
         chat_sessions[sender]["last_activity"] = time.time()
+
+        session = chat_sessions[sender]
+
+        session["message_count"] = session.get("message_count", 0) + 1
+
+        # Oturum çok uzadıysa geçici durum tazelenir; bekleyen bir seçim listesi
+        # varsa (aktif akış) tazeleme bir sonraki mesaja ertelenir.
+        if (
+            session["message_count"] >= LONG_SESSION_MESSAGE_LIMIT
+            and not session.get("pending_products")
+        ):
+
+            print("🧽 Uzun oturum: geçici durum tazelendi")
+
+            refresh_transient_state(session)
+
+            session["message_count"] = 0
+
+        # Müşteri baştan selamlıyorsa eski gürültü (geçmiş dahil) atılır;
+        # aktif ürün ve ödeme bekleyen sipariş korunur.
+        if is_fresh_greeting(message_text):
+
+            refresh_transient_state(session, reset_history=True)
 
         url = extract_url(message_text)
 
@@ -1013,6 +1080,11 @@ async def whatsapp_webhook(request: Request):
                     "role": "assistant",
                     "content": assistant_answer
                 }
+            )
+
+            # Geçmiş bellekte de sınırsız büyümesin: saklarken de trim edilir
+            chat_sessions[sender]["history"] = (
+                chat_sessions[sender]["history"][-MAX_HISTORY:]
             )
 
             send_whatsapp_message(

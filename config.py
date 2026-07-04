@@ -33,7 +33,14 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 
 # App
 CACHE_TTL = 600
-MAX_HISTORY = 20
+
+# Modele gönderilen ve bellekte saklanan sohbet geçmişi sınırı (mesaj sayısı).
+# Uzun geçmiş modelin sistem talimatına sadakatini bozduğu için düşük tutulur.
+MAX_HISTORY = 12
+
+# Bir oturumda bu kadar mesaj işlendikten sonra geçici durum (eski ürünler,
+# bekleyen aday listeleri, tamamlanmış sipariş durumu) tazelenir.
+LONG_SESSION_MESSAGE_LIMIT = 30
 MAX_PRODUCTS = 5
 SESSION_TIMEOUT = 60 * 30
 PROCESSED_MESSAGE_TTL = 600
