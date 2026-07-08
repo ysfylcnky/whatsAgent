@@ -64,6 +64,26 @@ SIPARIS_TOOL = {
 }
 
 
+# Zaten oluşturulmuş (onaylanmış) bir siparişte müşteri değişiklik istediğinde
+# çağrılan güncelleme tool'u. Parametreleri siparis_olustur ile aynıdır: mağazaya
+# tam ve güncel sipariş iletilebilmesi için tüm alanlar zorunludur (değişmeyenler de
+# mevcut değeriyle doldurulur). Ne zaman/nasıl tetikleneceği prompt dosyasında tanımlıdır.
+SIPARIS_GUNCELLE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "siparis_guncelle",
+        "description": (
+            "Zaten oluşturulmuş (onaylanmış) bir siparişte müşteri değişiklik "
+            "istediğinde çağrılır (adres, ürün, renk, beden, adet veya ödeme şekli). "
+            "Değişikliği müşteriyle netleştirip onayını aldıktan sonra çağır. "
+            "Siparişin GÜNCEL halini eksiksiz gönder: değişen alanların yeni değerini, "
+            "değişmeyen alanların mevcut değerini birlikte ilet. Bilgi uydurma."
+        ),
+        "parameters": SIPARIS_TOOL["function"]["parameters"]
+    }
+}
+
+
 def format_order_message(order):
 
     # Sipariş zamanı: gün.ay.yıl saat:dakika

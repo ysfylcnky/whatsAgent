@@ -62,6 +62,12 @@ system_prompt = system_prompt.replace(
     "{IBAN_BILGISI}",
     f"{STORE_IBAN} - {STORE_IBAN_NAME}"
 )
+
+# Sipariş oluşturma/değişiklik davranış kuralları ayrı prompt dosyasından okunur ve
+# sistem prompt'una eklenir (kural Python'a if-else olarak gömülmez).
+with open("siparis_ozellik_promptu.md", "r", encoding="utf-8") as f:
+    system_prompt = system_prompt + "\n\n" + f.read()
+
 general_prompt = open(
     "general_prompt.txt",
     encoding="utf-8"
@@ -993,14 +999,16 @@ async def whatsapp_webhook(request: Request):
 
             history = chat_sessions[sender]["history"][-MAX_HISTORY:]
 
-            # siparis_olustur tool'u yalnızca yeni sipariş alınabilir durumda (order_state None) verilir
+            # order_state None -> siparis_olustur (yeni sipariş); order_state dolu
+            # (odeme_bekliyor/tamamlandi) -> siparis_guncelle (mevcut siparişte değişiklik)
             response = product_chat(
                 system_prompt,
                 products_block,
                 history,
                 message_text,
                 sender,
-                include_order_tool=(order_state is None)
+                include_order_tool=(order_state is None),
+                include_update_tool=(order_state is not None)
             )
             print(response) # geçici
 
@@ -1054,6 +1062,41 @@ async def whatsapp_webhook(request: Request):
                         "kargoya verilecek. Kargo takip numaranız mesaj olarak "
                         "tarafınıza iletilecek 💕"
                     )
+
+            # Zaten oluşturulmuş bir siparişte değişiklik istendiyse model
+            # siparis_guncelle tool'unu çağırır (order_state dolu olduğunda verilir)
+            elif tool_call and tool_call["name"] == "siparis_guncelle":
+
+                order = tool_call["arguments"]
+
+                # Güncel sipariş, aynı "🛒 *YENİ SİPARİŞ*" formatında mağaza
+                # numarasına TEKRAR iletilir. order_state korunur (odeme_bekliyor /
+                # tamamlandi bozulmaz); Havale/EFT'de dekont beklemeye devam edilir.
+                order_notify_message = format_order_message(order)
+
+                if STORE_NOTIFY_PHONE:
+
+                    try:
+
+                        send_whatsapp_message(
+                            STORE_NOTIFY_PHONE,
+                            order_notify_message
+                        )
+
+                    except Exception as e:
+
+                        # Bildirim gönderimi başarısız olsa bile akış kesilmez
+                        print("NOTIFY SEND ERROR:", str(e))
+
+                else:
+
+                    print("⚠️ STORE_NOTIFY_PHONE tanımlı değil")
+
+                assistant_answer = (
+                    "Siparişinizdeki değişikliği aldım ve güncelledim 😊 "
+                    "Yeni bilgileriniz ekibimize iletildi. Başka bir değişiklik "
+                    "olursa çekinmeden yazabilirsiniz 💕"
+                )
 
             elif tool_call and tool_call["name"] == "urun_ara":
 
