@@ -221,10 +221,11 @@ def _keep_or_reset_order_state(session):
         session["order_state"] = None
 
 
-def activate_ikas_product(sender, product_id, intro="Buldum 😊"):
+def activate_ikas_product(sender, product_id, intro=""):
 
     # Seçilen ürünü (net eşleşme ya da müşterinin numaralı listeden seçimi) aktif ürün yapar.
-    # intro: yanıtın giriş cümlesi (düzeltme akışında "... geçiyorum 😊" gibi değişir).
+    # intro: yanıtın giriş cümlesi. Net eşleşmede boştur (yanıt doğrudan ürün adıyla başlar);
+    # düzeltme akışında "... geçiyorum 😊" gibi anlamlı bir giriş cümlesiyle çağrılır.
     context = get_cached_ikas_context_by_id(product_id)
 
     if not context:
@@ -260,8 +261,12 @@ def activate_ikas_product(sender, product_id, intro="Buldum 😊"):
     elif context.get("price"):
         detail += f" Fiyatı {context['price']} TL."
 
+    # intro boşsa yanıt doğrudan ürün adıyla başlar (baştaki gereksiz boşluk kalmaz);
+    # dolu ise giriş cümlesiyle ürün adı arasına tek boşluk konur.
+    prefix = f"{intro} " if intro else ""
+
     return (
-        f"{intro} {context.get('name', '')}.{detail} "
+        f"{prefix}{context.get('name', '')}.{detail} "
         "Bu ürünle ilgili sorularınızı sorabilirsiniz."
     )
 
