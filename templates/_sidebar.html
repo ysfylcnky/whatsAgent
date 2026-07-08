@@ -1,0 +1,45 @@
+<!-- Ortak sidebar. active_page değişkeni ile aktif menü vurgulanır. -->
+<aside class="sidebar">
+
+    <div>
+        <div class="logo">
+            <div class="logo-icon"><i class="fa-brands fa-whatsapp"></i></div>
+            <div>
+                <h3>WhatsAgent</h3>
+                <span>Command Center</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <span class="nav-label">Genel</span>
+            <a class="nav-item {{ 'active' if active_page == 'dashboard' else '' }}" href="/dashboard">
+                <i class="fa-solid fa-gauge-high"></i><span>Dashboard</span>
+            </a>
+            <a class="nav-item {{ 'active' if active_page == 'conversations' else '' }}" href="/dashboard/conversations">
+                <i class="fa-solid fa-comments"></i><span>Conversations</span>
+            </a>
+            <a class="nav-item {{ 'active' if active_page == 'customers' else '' }}" href="/dashboard/customers">
+                <i class="fa-solid fa-users"></i><span>Customers</span>
+            </a>
+
+            <span class="nav-label">Zekâ</span>
+            <a class="nav-item {{ 'active' if active_page == 'ai_usage' else '' }}" href="/dashboard/ai-usage">
+                <i class="fa-solid fa-robot"></i><span>AI Usage</span>
+            </a>
+            <a class="nav-item {{ 'active' if active_page == 'reports' else '' }}" href="/dashboard/reports">
+                <i class="fa-solid fa-chart-pie"></i><span>Reports</span>
+            </a>
+            <a class="nav-item {{ 'active' if active_page == 'settings' else '' }}" href="/dashboard/settings">
+                <i class="fa-solid fa-gear"></i><span>Settings</span>
+            </a>
+        </nav>
+    </div>
+
+    <div class="sidebar-card">
+        <div class="sidebar-card-icon"><i class="fa-solid fa-bolt"></i></div>
+        <strong>Pro aktif</strong>
+        <span>Sınırsız AI yanıt</span>
+        <div class="sidebar-footer">WhatsAgent v2.0</div>
+    </div>
+
+</aside>

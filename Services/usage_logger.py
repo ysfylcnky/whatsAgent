@@ -89,11 +89,65 @@ def initialize_database():
             )
         """)
 
+        # conversations: her WhatsApp mesajını (gelen/giden) kalıcı loglar.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                timestamp DATETIME NOT NULL,
+                sender VARCHAR(32) NOT NULL,
+                direction VARCHAR(8) NOT NULL,
+                content TEXT,
+                INDEX idx_conv_sender (sender),
+                INDEX idx_conv_timestamp (timestamp)
+            )
+        """)
+
+        # customers: sipariş veren müşteriler (WhatsApp numarası anahtar).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                phone VARCHAR(32) PRIMARY KEY,
+                ad_soyad VARCHAR(255),
+                first_seen DATETIME NOT NULL,
+                last_seen DATETIME NOT NULL
+            )
+        """)
+
+        # orders: her sipariş/güncelleme bir satır. Güncelleme is_update=1 ile
+        # yeni satır olarak eklenir (geçmiş korunur; en yeni satır güncel haldir).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                timestamp DATETIME NOT NULL,
+                customer_phone VARCHAR(32) NOT NULL,
+                ad_soyad VARCHAR(255),
+                telefon VARCHAR(64),
+                teslimat_adresi TEXT,
+                urun VARCHAR(255),
+                renk VARCHAR(128),
+                beden VARCHAR(128),
+                adet INT,
+                odeme_sekli VARCHAR(64),
+                is_update TINYINT NOT NULL DEFAULT 0,
+                INDEX idx_orders_phone (customer_phone),
+                INDEX idx_orders_timestamp (timestamp)
+            )
+        """)
+
+        # settings: panelden düzenlenebilen anahtar-değer ayarları. config.py bu
+        # tabloyu öncelikli okur; kayıt yoksa .env / varsayılan değere düşer.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                skey VARCHAR(64) PRIMARY KEY,
+                svalue TEXT,
+                updated_at DATETIME NOT NULL
+            )
+        """)
+
         conn.commit()
         cursor.close()
         conn.close()
 
-        print("🟢 MySQL veritabanı/tablo hazır.")
+        print("🟢 MySQL veritabanı/tablolar hazır.")
 
     except Exception as e:
 

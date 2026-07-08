@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsAgent · AI Usage</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=22">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+/* AI Usage sayfasına özel yerleşim (dashboard.css değişkenlerini kullanır) */
+.aiu-tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:22px; }
+.aiu-tile{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:18px;
+}
+.aiu-tile .t-label{ font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+.aiu-tile .t-val{ font-size:26px; font-weight:800; color:var(--text); margin-top:6px; letter-spacing:-.5px; }
+.aiu-tile .t-sub{ font-size:12px; color:var(--muted); margin-top:4px; }
+
+.aiu-grid{ display:grid; grid-template-columns:1.4fr 1fr; gap:22px; margin-bottom:22px; }
+@media(max-width:900px){ .aiu-grid{ grid-template-columns:1fr; } }
+
+.aiu-card{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:18px; min-width:0;
+}
+.aiu-card h3{ font-size:15px; font-weight:700; margin-bottom:14px; color:var(--text); }
+.aiu-chart-wrap{ position:relative; height:260px; }
+
+.aiu-table-wrap{ overflow-x:auto; }
+table.aiu-table{ width:100%; border-collapse:collapse; font-size:13px; }
+table.aiu-table th, table.aiu-table td{
+    text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap;
+}
+table.aiu-table th:first-child, table.aiu-table td:first-child{ text-align:left; }
+table.aiu-table th{ color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; }
+table.aiu-table td{ color:var(--text); }
+table.aiu-table td b{ color:var(--violet); }
+
+.ranklist2{ display:flex; flex-direction:column; gap:2px; }
+.rank-row{ display:flex; align-items:center; gap:12px; padding:9px 4px; border-bottom:1px solid var(--border); font-size:13px; }
+.rank-row .r-i{ width:22px; height:22px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; background:var(--surface-2); color:var(--muted); }
+.rank-row .r-name{ flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rank-row .r-val{ color:var(--green); font-weight:600; }
+.rank-row .r-req{ color:var(--muted); font-size:11.5px; }
+
+.aiu-empty{ color:var(--muted); font-size:14px; text-align:center; padding:30px; }
+</style>
+</head>
+
+<body>
+
+<div class="aurora aurora-1"></div>
+<div class="aurora aurora-2"></div>
+<div class="aurora aurora-3"></div>
+
+<div class="dashboard-layout">
+
+    {% set active_page = "ai_usage" %}
+    {% include "_sidebar.html" %}
+
+    <main class="main-content">
+
+        <header class="topbar">
+            <div>
+                <h1>AI Usage 🤖</h1>
+                <p>Model bazlı maliyet, token ve yanıt süresi analizi · son 30 gün trendi</p>
+            </div>
+        </header>
+
+        <!-- Özet tile'lar -->
+        <div class="aiu-tiles" id="aiuTiles">
+            <div class="aiu-tile"><div class="t-label">Toplam İstek</div><div class="t-val" id="tRequests">—</div></div>
+            <div class="aiu-tile"><div class="t-label">Toplam Token</div><div class="t-val" id="tTokens">—</div><div class="t-sub" id="tTokensSub"></div></div>
+            <div class="aiu-tile"><div class="t-label">Toplam Maliyet</div><div class="t-val" id="tCost">—</div><div class="t-sub" id="tCostTry"></div></div>
+            <div class="aiu-tile"><div class="t-label">Ort. Yanıt Süresi</div><div class="t-val" id="tArt">—</div><div class="t-sub">saniye</div></div>
+            <div class="aiu-tile"><div class="t-label">İstek Başı Maliyet</div><div class="t-val" id="tAvgCost">—</div><div class="t-sub">USD / istek</div></div>
+        </div>
+
+        <!-- Trend grafikleri -->
+        <div class="aiu-grid">
+            <div class="aiu-card">
+                <h3>Günlük Maliyet Trendi (USD)</h3>
+                <div class="aiu-chart-wrap"><canvas id="costChart"></canvas></div>
+            </div>
+            <div class="aiu-card">
+                <h3>Maliyet Dağılımı (Model)</h3>
+                <div class="aiu-chart-wrap"><canvas id="modelCostChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="aiu-grid">
+            <div class="aiu-card">
+                <h3>Ortalama Yanıt Süresi Trendi (sn)</h3>
+                <div class="aiu-chart-wrap"><canvas id="artChart"></canvas></div>
+            </div>
+            <div class="aiu-card">
+                <h3>Maliyete Göre En Yoğun Müşteriler</h3>
+                <div class="ranklist2" id="topCustomers"><div class="aiu-empty">—</div></div>
+            </div>
+        </div>
+
+        <!-- Model bazlı tablo -->
+        <div class="aiu-card">
+            <h3>Model Bazlı Kırılım</h3>
+            <div class="aiu-table-wrap">
+                <table class="aiu-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th><th>İstek</th><th>Prompt Tok.</th><th>Completion Tok.</th>
+                            <th>Toplam Tok.</th><th>Maliyet (USD)</th><th>Ort. Süre (sn)</th><th>İstek/Maliyet</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modelTableBody">
+                        <tr><td colspan="8" class="aiu-empty">Yükleniyor…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<script src="/static/js/ai_usage.js?v=1"></script>
+</body>
+</html>

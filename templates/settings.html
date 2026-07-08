@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsAgent · Settings</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=22">
+
+<style>
+/* Settings sayfasına özel yerleşim (dashboard.css değişkenlerini kullanır) */
+.set-wrap{ max-width:720px; }
+.set-card{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:22px; margin-bottom:22px;
+}
+.set-card h3{ font-size:15px; font-weight:700; margin-bottom:4px; color:var(--text); }
+.set-card .hint{ font-size:12.5px; color:var(--muted); margin-bottom:18px; }
+
+.set-field{ margin-bottom:18px; }
+.set-field label{ display:block; font-size:12.5px; color:var(--text); font-weight:600; margin-bottom:7px; }
+.set-field input{
+    width:100%; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:11px 13px; font-size:14px; font-family:inherit;
+}
+.set-field input:focus{ outline:none; border-color:var(--green); }
+.set-field .sub{ font-size:11.5px; color:var(--muted); margin-top:6px; }
+.set-field .badge{
+    display:inline-block; font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:20px;
+    background:rgba(139,124,255,.15); color:var(--violet); margin-left:8px; vertical-align:middle;
+}
+
+.set-actions{ display:flex; align-items:center; gap:14px; }
+.set-btn{
+    border:none; cursor:pointer; border-radius:10px; padding:12px 22px;
+    font-size:14px; font-weight:700; font-family:inherit; background:var(--green); color:#04231a;
+    display:inline-flex; align-items:center; gap:8px;
+}
+.set-btn:hover{ filter:brightness(1.08); }
+.set-btn:disabled{ opacity:.6; cursor:default; }
+.set-msg{ font-size:13px; font-weight:600; }
+.set-msg.ok{ color:var(--green); }
+.set-msg.err{ color:#FB7185; }
+</style>
+</head>
+
+<body>
+
+<div class="aurora aurora-1"></div>
+<div class="aurora aurora-2"></div>
+<div class="aurora aurora-3"></div>
+
+<div class="dashboard-layout">
+
+    {% set active_page = "settings" %}
+    {% include "_sidebar.html" %}
+
+    <main class="main-content">
+
+        <header class="topbar">
+            <div>
+                <h1>Settings ⚙️</h1>
+                <p>Panelden düzenlenebilen ayarlar · kaydettiğinde anında geçerli olur (yeniden başlatma gerekmez)</p>
+            </div>
+        </header>
+
+        <div class="set-wrap">
+
+            <div class="set-card">
+                <h3>Havale / EFT Bilgileri</h3>
+                <p class="hint">Bu değerler müşteriye iletilen IBAN mesajında kullanılır. Boş bırakırsan .env varsayılanına döner.</p>
+                <div id="setGroupBank"></div>
+            </div>
+
+            <div class="set-card">
+                <h3>AI Tasarruf Hesabı Metrikleri</h3>
+                <p class="hint">Dashboard'daki tahmini tasarruf hesabında kullanılır: (tekil müşteri × ort. sohbet süresi) → kazanılan saat × çalışan saatlik ücreti.</p>
+                <div id="setGroupMetrics"></div>
+            </div>
+
+            <div class="set-actions">
+                <button class="set-btn" id="setSave"><i class="fa-solid fa-floppy-disk"></i> Kaydet ve Uygula</button>
+                <span class="set-msg" id="setMsg"></span>
+            </div>
+
+        </div>
+
+    </main>
+</div>
+
+<script src="/static/js/settings.js?v=1"></script>
+</body>
+</html>

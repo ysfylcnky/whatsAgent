@@ -1,4 +1,5 @@
 from datetime import datetime
+from Services.usage_logger import get_connection
 
 # OpenAI tool tanımı.
 # Model bu fonksiyonu YALNIZCA müşteri özeti açıkça onayladıktan ve
@@ -116,3 +117,88 @@ def format_order_message(order, is_update=False):
     )
 
     return mesaj
+
+
+def save_order(customer_phone, order, is_update=False):
+    """Sipariş bilgisini kalıcı olarak customers + orders tablolarına yazar.
+
+    customer_phone: WhatsApp gönderen numarası (müşteri anahtarı; siparişteki
+    'telefon' alanından farklı olabilir). is_update=True ise güncelleme yeni bir
+    orders satırı olarak eklenir (geçmiş korunur).
+
+    Yazma hatası sipariş/notify/yanıt akışını KESMEZ; tüm hatalar yutulur.
+    """
+    conn = None
+
+    try:
+
+        conn = get_connection()
+
+        cursor = conn.cursor()
+
+        now = datetime.now()
+
+        # Müşteri kaydı: yoksa oluştur, varsa ad_soyad/last_seen tazele
+        cursor.execute(
+            """
+            INSERT INTO customers (phone, ad_soyad, first_seen, last_seen)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                ad_soyad = VALUES(ad_soyad),
+                last_seen = VALUES(last_seen)
+            """,
+            (
+                customer_phone,
+                order.get("ad_soyad", ""),
+                now,
+                now
+            )
+        )
+
+        # Sipariş satırı (güncelleme de yeni satır olarak eklenir: is_update)
+        cursor.execute(
+            """
+            INSERT INTO orders (
+                timestamp,
+                customer_phone,
+                ad_soyad,
+                telefon,
+                teslimat_adresi,
+                urun,
+                renk,
+                beden,
+                adet,
+                odeme_sekli,
+                is_update
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                now,
+                customer_phone,
+                order.get("ad_soyad", ""),
+                order.get("telefon", ""),
+                order.get("teslimat_adresi", ""),
+                order.get("urun", ""),
+                order.get("renk", ""),
+                order.get("beden", ""),
+                order.get("adet") or 0,
+                order.get("odeme_sekli", ""),
+                1 if is_update else 0
+            )
+        )
+
+        conn.commit()
+        cursor.close()
+
+    except Exception as e:
+
+        print("🔴 save_order hatası:", e)
+
+    finally:
+
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass

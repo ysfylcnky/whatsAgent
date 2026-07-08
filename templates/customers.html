@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsAgent · Customers</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=22">
+
+<style>
+/* Customers sayfasına özel yerleşim (dashboard.css değişkenlerini kullanır) */
+.cust-wrap{
+    display:grid; grid-template-columns:380px 1fr; gap:22px;
+    height:calc(100vh - 190px); min-height:420px;
+}
+@media(max-width:900px){ .cust-wrap{ grid-template-columns:1fr; height:auto; } }
+
+.cust-panel{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); display:flex; flex-direction:column;
+    min-height:0; overflow:hidden;
+}
+.cust-panel-head{
+    padding:16px 18px; border-bottom:1px solid var(--border);
+    font-weight:700; font-size:15px; display:flex; align-items:center;
+    justify-content:space-between; gap:10px;
+}
+.cust-panel-head small{ color:var(--muted); font-weight:500; font-size:12.5px; }
+
+.cust-list{ overflow-y:auto; flex:1; min-height:0; }
+.cust-row{
+    padding:13px 18px; border-bottom:1px solid var(--border);
+    cursor:pointer; transition:var(--t); display:flex; flex-direction:column; gap:4px;
+}
+.cust-row:hover{ background:var(--surface-2); }
+.cust-row.active{ background:linear-gradient(100deg,rgba(139,124,255,.18),rgba(139,124,255,.03)); }
+.cust-row .r-top{ display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+.cust-row .r-name{ font-weight:600; color:var(--text); font-size:14px; }
+.cust-row .r-phone{ color:var(--muted); font-size:12px; }
+.cust-row .r-meta{ display:flex; gap:8px; align-items:center; color:var(--muted); font-size:11.5px; }
+.cust-row .r-pill{
+    font-size:10.5px; color:#062a13; background:var(--green);
+    border-radius:20px; padding:1px 8px; font-weight:700;
+}
+
+.cust-detail{ overflow-y:auto; flex:1; min-height:0; padding:20px; }
+.cust-summary{
+    display:flex; flex-wrap:wrap; gap:18px; padding:14px 16px; margin-bottom:16px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm);
+}
+.cust-summary div{ display:flex; flex-direction:column; gap:2px; }
+.cust-summary .s-label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+.cust-summary .s-val{ font-size:14px; color:var(--text); font-weight:600; }
+
+.order-card{
+    border:1px solid var(--border); border-radius:14px; padding:14px 16px;
+    margin-bottom:12px; background:var(--surface);
+}
+.order-card .o-head{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:8px; }
+.order-card .o-urun{ font-weight:700; color:var(--text); font-size:14.5px; }
+.order-card .o-time{ color:var(--muted); font-size:11.5px; white-space:nowrap; }
+.order-card .o-grid{ display:flex; flex-wrap:wrap; gap:6px 18px; color:var(--muted); font-size:12.5px; }
+.order-card .o-grid b{ color:var(--text); font-weight:600; }
+.order-card .o-addr{ margin-top:8px; color:var(--muted); font-size:12px; }
+.badge-update{
+    font-size:10.5px; color:var(--amber); background:rgba(251,191,36,.12);
+    border:1px solid rgba(251,191,36,.3); border-radius:20px; padding:1px 8px; margin-left:8px;
+}
+
+.pager{
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    padding:12px; border-top:1px solid var(--border); color:var(--muted); font-size:12.5px;
+}
+.pager button{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:6px 12px; cursor:pointer; font-size:12.5px; transition:var(--t);
+}
+.pager button:hover:not(:disabled){ border-color:var(--border-strong); }
+.pager button:disabled{ opacity:.4; cursor:not-allowed; }
+
+.cust-empty{ color:var(--muted); font-size:14px; text-align:center; margin:auto; padding:40px; }
+</style>
+</head>
+
+<body>
+
+<div class="aurora aurora-1"></div>
+<div class="aurora aurora-2"></div>
+<div class="aurora aurora-3"></div>
+
+<div class="dashboard-layout">
+
+    {% set active_page = "customers" %}
+    {% include "_sidebar.html" %}
+
+    <main class="main-content">
+
+        <header class="topbar">
+            <div>
+                <h1>Customers 👥</h1>
+                <p>Sipariş veren müşteriler ve sipariş geçmişi</p>
+            </div>
+        </header>
+
+        <div class="cust-wrap">
+
+            <!-- Sol: müşteri listesi -->
+            <div class="cust-panel">
+                <div class="cust-panel-head">
+                    <span>Müşteriler</span>
+                    <small id="custListMeta">—</small>
+                </div>
+                <div class="cust-list" id="custList">
+                    <div class="cust-empty">Yükleniyor…</div>
+                </div>
+                <div class="pager" id="listPager" style="display:none">
+                    <button id="listPrev">‹ Önceki</button>
+                    <span id="listPageInfo"></span>
+                    <button id="listNext">Sonraki ›</button>
+                </div>
+            </div>
+
+            <!-- Sağ: müşteri detayı + sipariş geçmişi -->
+            <div class="cust-panel">
+                <div class="cust-panel-head">
+                    <span id="detailTitle">Bir müşteri seçin</span>
+                    <small id="detailMeta"></small>
+                </div>
+                <div class="cust-detail" id="custDetail">
+                    <div class="cust-empty">Soldaki listeden bir müşteri seçin.</div>
+                </div>
+                <div class="pager" id="detailPager" style="display:none">
+                    <button id="detailNext">‹ Daha eski</button>
+                    <span id="detailPageInfo"></span>
+                    <button id="detailPrev">Daha yeni ›</button>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+</div>
+
+<script src="/static/js/customers.js?v=1"></script>
+</body>
+</html>

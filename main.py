@@ -9,14 +9,20 @@ except Exception:
 
 from fastapi import FastAPI
 from fastapi import Request
+from fastapi import Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import json
 import time
 import re
+import csv
+import io
+import secrets
 from urllib.parse import urlparse
+import config
 from Services.session_service import (
     store_product,
     build_products_block
@@ -29,6 +35,9 @@ from config import (
     STORE_NOTIFY_PHONE,
     STORE_IBAN,
     STORE_IBAN_NAME,
+    DASHBOARD_USER,
+    DASHBOARD_PASSWORD,
+    PANEL_PAGE_SIZE,
 )
 from Services.ikas_service import (
     get_cached_ikas_context,
@@ -42,31 +51,79 @@ from Services.media_service import (
     transcribe_audio
 )
 from Services.whatsapp_service import (
-    send_whatsapp_message
+    send_whatsapp_message as _send_whatsapp_message
 )
+from Services.conversation_logger import log_message
 from Services.openai_service import (
     general_chat,
     product_chat
 )
-from Services.order_service import format_order_message
+from Services.order_service import format_order_message, save_order
 from Services.usage_logger import initialize_database
+from Services.settings_service import get_all_stored_settings, save_stored_settings
 from Services.message_service import is_duplicate
-from Services.dashboard_service import get_dashboard_data
-
-
-with open("sales_prompt.txt", "r", encoding="utf-8") as f:
-    system_prompt = f.read()
-
-# Havale/EFT IBAN bilgisi prompt'a .env üzerinden enjekte edilir (gerçek IBAN dosyada tutulmaz)
-system_prompt = system_prompt.replace(
-    "{IBAN_BILGISI}",
-    f"{STORE_IBAN} - {STORE_IBAN_NAME}"
+from Services.dashboard_service import (
+    get_dashboard_data,
+    get_conversations_list,
+    get_conversation_detail,
+    get_customers_list,
+    get_customer_detail,
+    get_ai_usage_detail,
+    get_report_summary,
+    get_orders_export_rows,
+    get_daily_usage_export_rows
 )
 
-# Sipariş oluşturma/değişiklik davranış kuralları ayrı prompt dosyasından okunur ve
-# sistem prompt'una eklenir (kural Python'a if-else olarak gömülmez).
-with open("siparis_ozellik_promptu.md", "r", encoding="utf-8") as f:
-    system_prompt = system_prompt + "\n\n" + f.read()
+
+def send_whatsapp_message(to_number, message):
+
+    # whatsapp_service.send_whatsapp_message üzerine ince sarmalayıcı: gerçek
+    # gönderimi yapar, ardından müşteriye giden mesajı conversations tablosuna
+    # loglar. Mağaza bildirimleri (STORE_NOTIFY_PHONE) müşteri sohbeti sayılmaz,
+    # loglanmaz. Loglama/gönderim akışını değiştirmez; sadece ek olarak kaydeder.
+    _send_whatsapp_message(to_number, message)
+
+    try:
+
+        if to_number != STORE_NOTIFY_PHONE:
+            log_message(to_number, "giden", message)
+
+    except Exception as e:
+
+        print("🔴 conversation giden log hatası:", e)
+
+
+def build_system_prompt():
+    """Satış sistem prompt'unu dosyalardan kurar ve güncel ayarları enjekte eder.
+
+    IBAN bilgisi (panel settings / .env kaynaklı) prompt'taki {IBAN_BILGISI}
+    yerine yazılır; sipariş davranış kuralları ayrı prompt dosyasından okunur
+    (kural Python'a if-else olarak gömülmez). Panelden ayar değişince
+    reload_system_prompt() ile sunucu yeniden başlatılmadan tazelenir.
+    """
+    with open("sales_prompt.txt", "r", encoding="utf-8") as f:
+        prompt = f.read()
+
+    # Havale/EFT IBAN bilgisi prompt'a enjekte edilir (gerçek IBAN dosyada tutulmaz)
+    prompt = prompt.replace(
+        "{IBAN_BILGISI}",
+        f"{config.store_iban()} - {config.store_iban_name()}"
+    )
+
+    with open("siparis_ozellik_promptu.md", "r", encoding="utf-8") as f:
+        prompt = prompt + "\n\n" + f.read()
+
+    return prompt
+
+
+system_prompt = build_system_prompt()
+
+
+def reload_system_prompt():
+    """Panelden ayar değişince sistem prompt'unu bellekte yeniden kurar."""
+    global system_prompt
+    system_prompt = build_system_prompt()
+
 
 general_prompt = open(
     "general_prompt.txt",
@@ -616,6 +673,37 @@ initialize_database()
 chat_sessions = {}
 
 
+# Panel (dashboard) erişimi HTTP Basic Auth ile korunur. Kimlik config/.env'den
+# okunur; parola tanımlı değilse panel erişime kapalıdır (fail-closed).
+dashboard_security = HTTPBasic()
+
+
+def require_dashboard_auth(
+    credentials: HTTPBasicCredentials = Depends(dashboard_security)
+):
+
+    # Zamanlama saldırılarına karşı sabit süreli karşılaştırma yapılır
+    user_ok = secrets.compare_digest(
+        credentials.username,
+        DASHBOARD_USER or ""
+    )
+
+    pass_ok = bool(DASHBOARD_PASSWORD) and secrets.compare_digest(
+        credentials.password,
+        DASHBOARD_PASSWORD
+    )
+
+    if not (user_ok and pass_ok):
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Panel erişimi için yetkiniz yok.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return credentials.username
+
+
 @app.get("/")
 def home():
     return {"status": "ok"}
@@ -632,18 +720,328 @@ def product_context(url: str):
     return ai_context or {"error": "not_found", "query": query}
 
 @app.get("/admin/dashboard")
-def admin_dashboard():
+def admin_dashboard(user: str = Depends(require_dashboard_auth)):
 
     return get_dashboard_data()
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page(request: Request):
+async def dashboard_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
 
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={}
     )
+
+
+# ============ Conversations sayfası ============
+
+@app.get("/dashboard/conversations", response_class=HTMLResponse)
+async def conversations_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return templates.TemplateResponse(
+        request=request,
+        name="conversations.html",
+        context={}
+    )
+
+
+@app.get("/admin/conversations")
+def admin_conversations(
+    page: int = 1,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return get_conversations_list(page=page, page_size=PANEL_PAGE_SIZE)
+
+
+@app.get("/admin/conversations/detail")
+def admin_conversation_detail(
+    sender: str,
+    page: int = 1,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return get_conversation_detail(sender, page=page, page_size=PANEL_PAGE_SIZE)
+
+
+# ============ Customers sayfası ============
+
+@app.get("/dashboard/customers", response_class=HTMLResponse)
+async def customers_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return templates.TemplateResponse(
+        request=request,
+        name="customers.html",
+        context={}
+    )
+
+
+@app.get("/admin/customers")
+def admin_customers(
+    page: int = 1,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return get_customers_list(page=page, page_size=PANEL_PAGE_SIZE)
+
+
+@app.get("/admin/customers/detail")
+def admin_customer_detail(
+    phone: str,
+    page: int = 1,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return get_customer_detail(phone, page=page, page_size=PANEL_PAGE_SIZE)
+
+
+# ============ AI Usage sayfası ============
+
+@app.get("/dashboard/ai-usage", response_class=HTMLResponse)
+async def ai_usage_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return templates.TemplateResponse(
+        request=request,
+        name="ai_usage.html",
+        context={}
+    )
+
+
+@app.get("/admin/ai-usage")
+def admin_ai_usage(user: str = Depends(require_dashboard_auth)):
+
+    return get_ai_usage_detail()
+
+
+# ============ Reports sayfası ============
+
+def _csv_response(filename, header, rows):
+    """Türkçe Excel uyumlu CSV (UTF-8 BOM + noktalı virgül) indirtir."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow(header)
+    writer.writerows(rows)
+
+    content = "﻿" + buf.getvalue()
+
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.get("/dashboard/reports", response_class=HTMLResponse)
+async def reports_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return templates.TemplateResponse(
+        request=request,
+        name="reports.html",
+        context={}
+    )
+
+
+@app.get("/admin/reports")
+def admin_reports(
+    start: str = None,
+    end: str = None,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return get_report_summary(start=start, end=end)
+
+
+@app.get("/admin/reports/export/orders")
+def admin_reports_export_orders(
+    start: str = None,
+    end: str = None,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    rows = get_orders_export_rows(start=start, end=end)
+
+    header = [
+        "Tarih", "Musteri No", "Ad Soyad", "Telefon", "Urun", "Renk",
+        "Beden", "Adet", "Odeme Sekli", "Teslimat Adresi", "Kayit Tipi"
+    ]
+
+    return _csv_response(
+        f"siparisler_{start or 'baslangic'}_{end or 'bitis'}.csv",
+        header,
+        rows
+    )
+
+
+@app.get("/admin/reports/export/usage")
+def admin_reports_export_usage(
+    start: str = None,
+    end: str = None,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    rows = get_daily_usage_export_rows(start=start, end=end)
+
+    header = [
+        "Tarih", "Istek", "Prompt Token", "Completion Token",
+        "Toplam Token", "Maliyet (USD)"
+    ]
+
+    return _csv_response(
+        f"ai_kullanim_{start or 'baslangic'}_{end or 'bitis'}.csv",
+        header,
+        rows
+    )
+
+
+# ============ Settings sayfası ============
+
+# Panelde her ayarın etiketi + tipi (frontend gösterimi ve doğrulama için)
+_SETTINGS_META = {
+    "STORE_IBAN":                {"label": "IBAN", "type": "text"},
+    "STORE_IBAN_NAME":           {"label": "IBAN Ad Soyad", "type": "text"},
+    "EMPLOYEE_HOURLY_COST":      {"label": "Çalışan Saatlik Ücreti (TL)", "type": "number"},
+    "AVERAGE_CHAT_TIME_MINUTES": {"label": "Ortalama Sohbet Süresi (dk)", "type": "number"},
+}
+
+
+def _effective_settings():
+    """Her ayar için güncel (etkin) değer, varsayılan ve DB'de override var mı.
+
+    Tek DB okuması (get_all_stored_settings) ile çalışır; etkin değer = kayıtlı
+    değer (doluysa), yoksa .env/kod varsayılanı — config getter'larıyla aynı
+    mantık ama her alan için ayrı bağlantı açmadan.
+    """
+    stored = get_all_stored_settings()
+
+    defaults = {
+        "STORE_IBAN": config.STORE_IBAN,
+        "STORE_IBAN_NAME": config.STORE_IBAN_NAME,
+        "EMPLOYEE_HOURLY_COST": config.EMPLOYEE_HOURLY_COST,
+        "AVERAGE_CHAT_TIME_MINUTES": config.AVERAGE_CHAT_TIME_MINUTES,
+    }
+
+    fields = []
+    for key in config.EDITABLE_SETTING_KEYS:
+        meta = _SETTINGS_META.get(key, {"label": key, "type": "text"})
+
+        raw = stored.get(key)
+        overridden = raw is not None and str(raw).strip() != ""
+        value = raw if overridden else defaults.get(key)
+
+        # Sayısal alanları düzgün tip/gösterim için normalize et (tam sayı ise int)
+        if meta["type"] == "number" and value not in (None, ""):
+            try:
+                f = float(value)
+                value = int(f) if f == int(f) else f
+            except (TypeError, ValueError):
+                value = defaults.get(key)
+
+        fields.append({
+            "key": key,
+            "label": meta["label"],
+            "type": meta["type"],
+            "value": value,
+            "default": defaults.get(key),
+            "overridden": overridden,
+        })
+
+    return {"fields": fields}
+
+
+@app.get("/dashboard/settings", response_class=HTMLResponse)
+async def settings_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={}
+    )
+
+
+@app.get("/admin/settings")
+def admin_settings(user: str = Depends(require_dashboard_auth)):
+
+    return _effective_settings()
+
+
+@app.post("/admin/settings")
+async def admin_settings_save(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Geçersiz gövde."})
+
+    to_save = {}
+
+    for key in config.EDITABLE_SETTING_KEYS:
+
+        if key not in body:
+            continue
+
+        raw = body[key]
+        val = "" if raw is None else str(raw).strip()
+
+        # Sayısal alanlar: boş değilse geçerli (>= 0) sayı olmalı
+        if _SETTINGS_META.get(key, {}).get("type") == "number" and val != "":
+            try:
+                num = float(val.replace(",", "."))
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"ok": False, "error": f"{_SETTINGS_META[key]['label']} sayı olmalı."}
+                )
+            if num < 0:
+                return JSONResponse(
+                    status_code=400,
+                    content={"ok": False, "error": f"{_SETTINGS_META[key]['label']} negatif olamaz."}
+                )
+            # Tam sayıyı "300.0" değil "300" olarak sakla
+            val = str(int(num)) if num == int(num) else str(num)
+
+        to_save[key] = val
+
+    if not to_save:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Kaydedilecek alan yok."})
+
+    ok = save_stored_settings(to_save)
+
+    if not ok:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "Ayarlar kaydedilemedi (DB erişilemiyor olabilir)."}
+        )
+
+    # IBAN değişikliği sistem prompt'una anında yansısın (yeniden başlatma gerekmez)
+    reload_system_prompt()
+
+    return {"ok": True, "saved": list(to_save.keys()), "settings": _effective_settings()}
+
 
 @app.get("/webhook")
 async def verify_webhook(request: Request):
@@ -720,6 +1118,9 @@ async def whatsapp_webhook(request: Request):
 
         elif message_type == "image":
 
+            # Gelen görsel de konuşma geçmişine kalıcı loglanır (içerik etiketi)
+            log_message(sender, "gelen", "[görsel]")
+
             # Ödeme bekleniyorsa gelen görsel dekont olarak işlenir, sipariş kapanır.
             session = chat_sessions.get(sender)
 
@@ -747,6 +1148,11 @@ async def whatsapp_webhook(request: Request):
 
         print("SENDER:", sender)
         print("MESSAGE:", message_text)
+
+        # Gelen müşteri mesajı (text/sesli transkript) konuşma geçmişine loglanır.
+        # Bu nokta duplicate/grup guard'larından sonradır; giden mesajlar
+        # send_whatsapp_message sarmalayıcısında ayrıca loglanır.
+        log_message(sender, "gelen", message_text)
 
         if sender not in chat_sessions:
             chat_sessions[sender] = {
@@ -1040,6 +1446,10 @@ async def whatsapp_webhook(request: Request):
 
                     print("⚠️ STORE_NOTIFY_PHONE tanımlı değil")
 
+                # Sipariş kalıcı olarak kaydedilir (customers + orders). Yazma
+                # hatası notify/yanıt akışını KESMEZ (save_order hataları yutar).
+                save_order(sender, order, is_update=False)
+
                 # Müşteriye dönen bilgilendirme ve sipariş durumu ödeme türüne göre değişir
                 if order.get("odeme_sekli") == "Havale/EFT":
 
@@ -1092,6 +1502,9 @@ async def whatsapp_webhook(request: Request):
                 else:
 
                     print("⚠️ STORE_NOTIFY_PHONE tanımlı değil")
+
+                # Güncelleme yeni bir orders satırı olarak kalıcı yazılır (is_update=1)
+                save_order(sender, order, is_update=True)
 
                 assistant_answer = (
                     "Siparişinizdeki değişikliği aldım ve güncelledim 😊 "

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsAgent · Reports</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=22">
+
+<style>
+/* Reports sayfasına özel yerleşim (dashboard.css değişkenlerini kullanır) */
+.rep-toolbar{
+    display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:16px 18px; margin-bottom:22px;
+}
+.rep-field{ display:flex; flex-direction:column; gap:6px; }
+.rep-field label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+.rep-field input[type="date"]{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:9px 12px; font-size:13px; font-family:inherit;
+    color-scheme:dark;
+}
+.rep-btn{
+    border:none; cursor:pointer; border-radius:10px; padding:10px 16px;
+    font-size:13px; font-weight:600; font-family:inherit; display:inline-flex;
+    align-items:center; gap:8px;
+}
+.rep-btn.primary{ background:var(--green); color:#04231a; }
+.rep-btn.ghost{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
+.rep-btn:hover{ filter:brightness(1.08); }
+.rep-spacer{ flex:1; }
+
+.rep-tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:22px; }
+.rep-tile{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:18px;
+}
+.rep-tile .t-label{ font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+.rep-tile .t-val{ font-size:26px; font-weight:800; color:var(--text); margin-top:6px; letter-spacing:-.5px; }
+.rep-tile .t-sub{ font-size:12px; color:var(--muted); margin-top:4px; }
+
+.rep-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:22px; margin-bottom:22px; }
+@media(max-width:900px){ .rep-grid{ grid-template-columns:1fr; } }
+
+.rep-card{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:18px; min-width:0;
+}
+.rep-card h3{ font-size:15px; font-weight:700; margin-bottom:14px; color:var(--text); }
+.rep-card h3 i{ color:var(--muted); margin-right:8px; }
+
+.rep-row{ display:flex; justify-content:space-between; align-items:center; padding:9px 2px; border-bottom:1px solid var(--border); font-size:13.5px; }
+.rep-row:last-child{ border-bottom:none; }
+.rep-row .k{ color:var(--muted); }
+.rep-row .v{ color:var(--text); font-weight:700; }
+
+.rep-pay{ display:flex; flex-direction:column; gap:2px; }
+.rep-empty{ color:var(--muted); font-size:13px; padding:6px 2px; }
+
+.rep-range-note{ font-size:12.5px; color:var(--muted); margin-top:-8px; margin-bottom:18px; }
+</style>
+</head>
+
+<body>
+
+<div class="aurora aurora-1"></div>
+<div class="aurora aurora-2"></div>
+<div class="aurora aurora-3"></div>
+
+<div class="dashboard-layout">
+
+    {% set active_page = "reports" %}
+    {% include "_sidebar.html" %}
+
+    <main class="main-content">
+
+        <header class="topbar">
+            <div>
+                <h1>Reports 📊</h1>
+                <p>Tarih aralığına göre AI kullanımı, sipariş ve mesaj özeti · CSV export</p>
+            </div>
+        </header>
+
+        <!-- Tarih aralığı + export -->
+        <div class="rep-toolbar">
+            <div class="rep-field">
+                <label for="repStart">Başlangıç</label>
+                <input type="date" id="repStart">
+            </div>
+            <div class="rep-field">
+                <label for="repEnd">Bitiş</label>
+                <input type="date" id="repEnd">
+            </div>
+            <button class="rep-btn primary" id="repApply"><i class="fa-solid fa-filter"></i> Uygula</button>
+            <div class="rep-spacer"></div>
+            <button class="rep-btn ghost" id="repExportOrders"><i class="fa-solid fa-file-csv"></i> Siparişler CSV</button>
+            <button class="rep-btn ghost" id="repExportUsage"><i class="fa-solid fa-file-csv"></i> Günlük AI CSV</button>
+        </div>
+
+        <p class="rep-range-note" id="repRangeNote">—</p>
+
+        <!-- Özet tile'lar -->
+        <div class="rep-tiles">
+            <div class="rep-tile"><div class="t-label">AI İstek</div><div class="t-val" id="tReq">—</div><div class="t-sub" id="tTokens"></div></div>
+            <div class="rep-tile"><div class="t-label">AI Maliyet</div><div class="t-val" id="tCost">—</div><div class="t-sub" id="tCostTry"></div></div>
+            <div class="rep-tile"><div class="t-label">Sipariş</div><div class="t-val" id="tOrders">—</div><div class="t-sub" id="tOrdersSub"></div></div>
+            <div class="rep-tile"><div class="t-label">Toplam Adet</div><div class="t-val" id="tQty">—</div><div class="t-sub">sipariş edilen ürün</div></div>
+            <div class="rep-tile"><div class="t-label">Mesaj</div><div class="t-val" id="tMsg">—</div><div class="t-sub" id="tMsgSub"></div></div>
+        </div>
+
+        <!-- Detay kartları -->
+        <div class="rep-grid">
+            <div class="rep-card">
+                <h3><i class="fa-solid fa-robot"></i>AI Kullanımı</h3>
+                <div id="repAi"></div>
+            </div>
+            <div class="rep-card">
+                <h3><i class="fa-solid fa-bag-shopping"></i>Siparişler</h3>
+                <div id="repOrders"></div>
+                <h3 style="margin-top:18px;">Ödeme Şekli</h3>
+                <div class="rep-pay" id="repPay"></div>
+            </div>
+            <div class="rep-card">
+                <h3><i class="fa-solid fa-comments"></i>Mesajlar</h3>
+                <div id="repMsg"></div>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<script src="/static/js/reports.js?v=1"></script>
+</body>
+</html>
