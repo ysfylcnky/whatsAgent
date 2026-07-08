@@ -84,7 +84,7 @@ SIPARIS_GUNCELLE_TOOL = {
 }
 
 
-def format_order_message(order):
+def format_order_message(order, is_update=False):
 
     # Sipariş zamanı: gün.ay.yıl saat:dakika
     zaman = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -95,8 +95,12 @@ def format_order_message(order):
     if odeme == "Kapıda Ödeme":
         odeme = odeme + " (+90 TL ek ücret)"
 
+    # Güncelleme bildirimi yeni siparişten ayrılsın diye başlık değişir;
+    # mağaza sahibi mesajı yeni sipariş sanmaz.
+    baslik = "🔄 *SİPARİŞ GÜNCELLEME*" if is_update else "🛒 *YENİ SİPARİŞ*"
+
     mesaj = (
-        "🛒 *YENİ SİPARİŞ*\n"
+        f"{baslik}\n"
         f"🕒 {zaman}\n"
         "\n"
         f"👤 Ad Soyad: {order.get('ad_soyad', '')}\n"

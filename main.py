@@ -1069,10 +1069,11 @@ async def whatsapp_webhook(request: Request):
 
                 order = tool_call["arguments"]
 
-                # Güncel sipariş, aynı "🛒 *YENİ SİPARİŞ*" formatında mağaza
-                # numarasına TEKRAR iletilir. order_state korunur (odeme_bekliyor /
-                # tamamlandi bozulmaz); Havale/EFT'de dekont beklemeye devam edilir.
-                order_notify_message = format_order_message(order)
+                # Güncel sipariş mağaza numarasına TEKRAR iletilir; ancak
+                # "🔄 SİPARİŞ GÜNCELLEME" başlığıyla (is_update=True) gönderilir ki
+                # mağaza sahibi bunu yeni sipariş sanmasın. order_state korunur
+                # (odeme_bekliyor / tamamlandi bozulmaz); Havale/EFT'de dekont beklenir.
+                order_notify_message = format_order_message(order, is_update=True)
 
                 if STORE_NOTIFY_PHONE:
 
