@@ -1,0 +1,18 @@
+# Sanal ortam ve IDE
+.venv/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# Ortam dosyaları (runtime'da docker-compose env_file ile verilir, imaja gömülmez)
+.env
+
+# Log ve geçici dosyalar
+*.log

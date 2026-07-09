@@ -1,0 +1,36 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    # DB kimlik bilgileri mevcut .env dosyasından okunur (yapı değiştirilmedi).
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      # MySQL verileri kalıcı volume'de tutulur
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    # Tüm ortam değişkenleri mevcut .env dosyasından gelir.
+    env_file: .env
+    # Konteyner içinde MySQL, "localhost" yerine mysql servisine bağlanmalı.
+    # load_dotenv(override=False) olduğu için bu değer .env'deki MYSQL_HOST'u ezer.
+    environment:
+      MYSQL_HOST: mysql
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
