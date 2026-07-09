@@ -5,7 +5,7 @@ load_dotenv()
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL_NAME = "gpt-4.1-mini"
+MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
 AUDIO_MODEL_NAME = "gpt-4o-mini-transcribe"
 
 # WhatsApp
@@ -37,7 +37,7 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 
 # App
-CACHE_TTL = 600
+CACHE_TTL = int(os.getenv("CACHE_TTL") or 600)
 
 # Modele gönderilen ve bellekte saklanan sohbet geçmişi sınırı (mesaj sayısı).
 # Uzun geçmiş modelin sistem talimatına sadakatini bozduğu için düşük tutulur.
@@ -46,11 +46,11 @@ MAX_HISTORY = 12
 # Bir oturumda bu kadar mesaj işlendikten sonra geçici durum (eski ürünler,
 # bekleyen aday listeleri, tamamlanmış sipariş durumu) tazelenir.
 LONG_SESSION_MESSAGE_LIMIT = 30
-MAX_PRODUCTS = 5
+MAX_PRODUCTS = int(os.getenv("MAX_PRODUCTS") or 5)
 SESSION_TIMEOUT = 60 * 30
 PROCESSED_MESSAGE_TTL = 600
 
-VERIFY_TOKEN = "mumi_verify_token"
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN") or "mumi_verify_token"
 
 # GPT-4.1-mini Pricing (USD / 1M Tokens)
 

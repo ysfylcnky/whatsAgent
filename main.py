@@ -13,7 +13,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import PlainTextResponse, Response, JSONResponse
+from fastapi.responses import PlainTextResponse, Response, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import json
 import time
@@ -61,6 +61,13 @@ from Services.openai_service import (
 from Services.order_service import format_order_message, save_order
 from Services.usage_logger import initialize_database
 from Services.settings_service import get_all_stored_settings, save_stored_settings
+from Services.setup_service import (
+    get_setup_state,
+    save_section as save_setup_section,
+    run_test as run_setup_test,
+    mark_complete as mark_setup_complete,
+    is_setup_complete,
+)
 from Services.message_service import is_duplicate
 from Services.dashboard_service import (
     get_dashboard_data,
@@ -673,6 +680,26 @@ initialize_database()
 chat_sessions = {}
 
 
+@app.middleware("http")
+async def _setup_gate(request: Request, call_next):
+    """Kurulum tamamlanmamışsa panel sayfalarını Kurulum ekranına yönlendirir.
+
+    Yalnız /dashboard HTML sayfaları kapsanır; setup ekranının kendisi, statik
+    dosyalar, /admin uçları ve /webhook muaftır. Beklenmedik bir hatada
+    yönlendirme yapılmaz (fail-open) — panel kilitlenmesin.
+    """
+    path = request.url.path
+
+    if path.startswith("/dashboard") and path != "/dashboard/settings/setup":
+        try:
+            if not is_setup_complete():
+                return RedirectResponse(url="/dashboard/settings/setup", status_code=307)
+        except Exception:
+            pass
+
+    return await call_next(request)
+
+
 # Panel (dashboard) erişimi HTTP Basic Auth ile korunur. Kimlik config/.env'den
 # okunur; parola tanımlı değilse panel erişime kapalıdır (fail-closed).
 dashboard_security = HTTPBasic()
@@ -1041,6 +1068,93 @@ async def admin_settings_save(
     reload_system_prompt()
 
     return {"ok": True, "saved": list(to_save.keys()), "settings": _effective_settings()}
+
+
+# ======================================================================
+# Kurulum (Setup) — SaaS onboarding. İş mantığı Services/setup_service'te;
+# burada yalnızca ince endpoint sarmalayıcıları ve auth vardır.
+# ======================================================================
+
+@app.get("/dashboard/settings/setup", response_class=HTMLResponse)
+async def setup_page(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    return templates.TemplateResponse(
+        request=request,
+        name="setup.html",
+        context={}
+    )
+
+
+@app.get("/admin/settings/setup")
+def admin_setup(user: str = Depends(require_dashboard_auth)):
+
+    return get_setup_state()
+
+
+@app.post("/admin/settings/setup/save")
+async def admin_setup_save(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Geçersiz gövde."})
+
+    section = body.get("section")
+    fields = body.get("fields") or {}
+
+    res = save_setup_section(section, fields)
+
+    if not res.get("ok"):
+        return JSONResponse(status_code=400, content=res)
+
+    # IBAN vb. (settings tablosuna yazılan) değişiklikler sistem prompt'una
+    # anında yansısın — mevcut IBAN akışıyla aynı davranış.
+    if section == "company":
+        reload_system_prompt()
+
+    res["state"] = get_setup_state()
+    return res
+
+
+@app.post("/admin/settings/setup/test")
+async def admin_setup_test(
+    request: Request,
+    user: str = Depends(require_dashboard_auth)
+):
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Geçersiz gövde."})
+
+    # Test başarısızlığı bir taşıma hatası değildir; 200 + ok:false ile döner ki
+    # arayüz kullanıcıya sebep mesajını gösterebilsin.
+    return run_setup_test(body.get("section"), body.get("values") or {})
+
+
+@app.post("/admin/settings/setup/complete")
+async def admin_setup_complete(
+    user: str = Depends(require_dashboard_auth)
+):
+
+    res = mark_setup_complete()
+
+    if not res.get("ok"):
+        return JSONResponse(status_code=400, content=res)
+
+    return res
 
 
 @app.get("/webhook")
