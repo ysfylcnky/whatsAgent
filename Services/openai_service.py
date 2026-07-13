@@ -130,17 +130,30 @@ def product_chat(
     message_text,
     sender,
     include_order_tool=True,
-    include_update_tool=False
+    include_update_tool=False,
+    order_block=""
 ):
+
+    system_content = (
+        system_prompt
+        + "\n\nÜrün Bilgileri:\n"
+        + products_block
+    )
+
+    # Oluşturulmuş bir sipariş varsa (güncelleme akışı) mevcut sipariş modele
+    # bağlam olarak verilir; böylece değişmeyen alanlar baştan sorulmaz/null olmaz.
+    if order_block:
+        system_content = (
+            system_content
+            + "\n\nMEVCUT SİPARİŞ (yalnızca güncelleme içindir):\n"
+            + order_block
+        )
 
     messages = [
 
         {
             "role": "system",
-            "content":
-                system_prompt
-                + "\n\nÜrün Bilgileri:\n"
-                + products_block
+            "content": system_content
         },
 
         *history,

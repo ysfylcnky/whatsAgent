@@ -85,6 +85,63 @@ SIPARIS_GUNCELLE_TOOL = {
 }
 
 
+def build_order_block(order):
+    """Mevcut (oluşturulmuş) siparişi modele bağlam olarak vermek için metin üretir.
+
+    Güncelleme akışında model, değişmeyen alanları bu bloktaki mevcut değerlerden
+    okur; böylece tüm siparişi baştan sormaz ve eksik alanları null bırakmaz.
+    Sipariş yoksa boş metin döner (bağlam eklenmez).
+    """
+    if not order:
+        return ""
+
+    return (
+        f"Ad Soyad: {order.get('ad_soyad', '')}\n"
+        f"Telefon: {order.get('telefon', '')}\n"
+        f"Adres: {order.get('teslimat_adresi', '')}\n"
+        f"Ürün: {order.get('urun', '')}\n"
+        f"Renk: {order.get('renk', '')}\n"
+        f"Beden: {order.get('beden', '')}\n"
+        f"Adet: {order.get('adet', '')}\n"
+        f"Ödeme: {order.get('odeme_sekli', '')}"
+    )
+
+
+# Modelin güncellemede boş/eksik gönderdiği alanları temsil eden değerler.
+# Bu değerler "değişmedi" kabul edilip önceki siparişin değeri korunur.
+_EMPTY_ORDER_VALUES = {None, "", "bilgi yok", "Bilgi yok", "BİLGİ YOK"}
+
+
+def merge_order(previous, updated):
+    """Güncelleme aracının argümanlarını önceki sipariş üstüne bindirir.
+
+    Model yalnızca değişen alanı güvenilir doldurabildiğinden, boş/eksik gönderilen
+    alanlar için önceki siparişin değeri korunur (null/0 kaydı önlenir). previous
+    yoksa updated aynen döner (davranış bozulmaz).
+    """
+    if not previous:
+        return updated
+
+    merged = dict(previous)
+
+    for key, value in (updated or {}).items():
+
+        if value in _EMPTY_ORDER_VALUES:
+            continue
+
+        # Adet: model 0/None gönderdiyse "değişmedi" say, önceki adedi koru
+        if key == "adet":
+            try:
+                if int(value) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        merged[key] = value
+
+    return merged
+
+
 def format_order_message(order, is_update=False):
 
     # Sipariş zamanı: gün.ay.yıl saat:dakika

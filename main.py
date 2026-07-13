@@ -58,7 +58,7 @@ from Services.openai_service import (
     general_chat,
     product_chat
 )
-from Services.order_service import format_order_message, save_order
+from Services.order_service import format_order_message, save_order, build_order_block, merge_order
 from Services.usage_logger import initialize_database
 from Services.settings_service import get_all_stored_settings, save_stored_settings
 from Services.setup_service import (
@@ -1274,6 +1274,7 @@ async def whatsapp_webhook(request: Request):
                 "products": {},
                 "active_url": None,
                 "order_state": None,
+                "last_order": None,
                 "pending_products": None,
                 "last_candidates": None,
                 "message_count": 0,
@@ -1521,6 +1522,15 @@ async def whatsapp_webhook(request: Request):
 
             # order_state None -> siparis_olustur (yeni sipariş); order_state dolu
             # (odeme_bekliyor/tamamlandi) -> siparis_guncelle (mevcut siparişte değişiklik)
+            # Sipariş oluşturulmuşsa mevcut sipariş modele bağlam olarak verilir ki
+            # güncellemede değişmeyen alanları baştan sormasın / null bırakmasın.
+            order_block = ""
+
+            if order_state is not None:
+                order_block = build_order_block(
+                    chat_sessions[sender].get("last_order")
+                )
+
             response = product_chat(
                 system_prompt,
                 products_block,
@@ -1528,7 +1538,8 @@ async def whatsapp_webhook(request: Request):
                 message_text,
                 sender,
                 include_order_tool=(order_state is None),
-                include_update_tool=(order_state is not None)
+                include_update_tool=(order_state is not None),
+                order_block=order_block
             )
             print(response) # geçici
 
@@ -1564,6 +1575,10 @@ async def whatsapp_webhook(request: Request):
                 # hatası notify/yanıt akışını KESMEZ (save_order hataları yutar).
                 save_order(sender, order, is_update=False)
 
+                # Oluşturulan sipariş oturumda saklanır; sonraki güncelleme akışında
+                # değişmeyen alanlar buradan okunur (history trim'inden bağımsız).
+                chat_sessions[sender]["last_order"] = order
+
                 # Müşteriye dönen bilgilendirme ve sipariş durumu ödeme türüne göre değişir
                 if order.get("odeme_sekli") == "Havale/EFT":
 
@@ -1591,7 +1606,15 @@ async def whatsapp_webhook(request: Request):
             # siparis_guncelle tool'unu çağırır (order_state dolu olduğunda verilir)
             elif tool_call and tool_call["name"] == "siparis_guncelle":
 
-                order = tool_call["arguments"]
+                # Model yalnızca değişen alanı güvenilir gönderir; boş/eksik alanlar
+                # önceki siparişin değeriyle doldurulur (null/0 kaydı önlenir).
+                order = merge_order(
+                    chat_sessions[sender].get("last_order"),
+                    tool_call["arguments"]
+                )
+
+                # Güncel sipariş oturumda saklanır (sonraki güncellemelere temel olur)
+                chat_sessions[sender]["last_order"] = order
 
                 # Güncel sipariş mağaza numarasına TEKRAR iletilir; ancak
                 # "🔄 SİPARİŞ GÜNCELLEME" başlığıyla (is_update=True) gönderilir ki
