@@ -104,8 +104,23 @@ Kullanıcı ve Rol Yönetimi: Mağaza sahipleri ve çalışanları için yetkile
 Gelişmiş Rate Limiting & Quota Management: Her müşterinin aylık bot kullanım kotasını aşmasını engelleyecek altyapı.
 Platform Çeşitliliği: Sadece İkas değil, Shopify, Ticimax, WooCommerce adaptörleri.
 11. DevOps
-Dockerfile ve docker-compose.yml hazır edilmiş
-. Geliştirme/test için yeterli.
+Dockerfile ve docker-compose.yml hazır edilmiş.
+
+**GÜNCELLEME (2026-07-21) — Production Docker'a alındı.** Sunucu (`/opt/whatsagent-ai`)
+systemd + venv kurulumundan compose'a taşındı: app + mysql:8.0 + redis:7-alpine.
+Eski `whatsagent.service` durduruldu ve `disable` edildi. nginx (`api.mumifashion.com`,
+Certbot TLS) → `127.0.0.1:8000` zinciri korundu. Reboot testi geçti: `restart: unless-stopped`
+ile üç konteyner elle müdahale olmadan ayağa kalkıyor. Geçiş runbook'u: `DOCKER_MIGRATION.md`.
+
+Geçişte karşılaşılan ve çözülen tuzaklar:
+* **MySQL init yarışı** — `mysqladmin ping` init sırasındaki geçici sunucuya da yanıt verir;
+  root parolası en son uygulandığı için erken restore `ERROR 1045` verir. Beklemede
+  "init process done" logu + fiili auth denemesi şart.
+* **Saat dilimi** — konteynerler UTC, sunucu Europe/Istanbul. `datetime.now()` ile yazılan
+  damgalar 3 saat geriye kaydı, panelde sıralama bozuldu. Compose'a `TZ` eklendi.
+* **`.dockerignore`** — `venv/` (sunucudaki ad) dışlanmamıştı; `.venv/` yeterli değil.
+* **Port bağlama** — `0.0.0.0:8000` Docker'da ufw'yi atlar ve paneli TLS'siz açar;
+  `127.0.0.1:8000:8000` yapıldı.
 Eksiklikler:
 Production Hazırlığı: CMD ["uvicorn", "main:app"...] kullanılmış
 . Production'da Gunicorn (Uvicorn worker'ları ile) kullanılmalıdır.
