@@ -1,6 +1,15 @@
 # Sanal ortam ve IDE
+# NOT: sunucuda venv dizini "venv" adıyla duruyor; ikisi de dışlanmalı,
+# aksi halde COPY . . ile yüzlerce MB ölü ağırlık imaja girer.
 .venv/
+venv/
 .idea/
+
+# Repo dökümü (üretilmiş dosya, imajda işi yok)
+repomix-output.md
+
+# Geçiş dokümanı
+DOCKER_MIGRATION.md
 
 # Python cache
 __pycache__/

@@ -43,7 +43,10 @@ services:
       # Oturum deposu: konteyner ağındaki redis servisi.
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "8000:8000"
+      # Yalnız localhost'a bağlanır: dışarıdan tek giriş nginx (TLS) üzerindendir.
+      # "8000:8000" yazılsaydı Docker portu 0.0.0.0'a açar ve ufw kurallarını
+      # atlayarak paneli TLS'siz olarak internete sunardı.
+      - "127.0.0.1:8000:8000"
     depends_on:
       mysql:
         condition: service_healthy
