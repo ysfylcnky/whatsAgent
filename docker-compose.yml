@@ -8,6 +8,9 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+      # Konteynerler varsayılan olarak UTC'dir; sunucu ise Europe/Istanbul.
+      # Eşitlenmezse uygulama zaman damgalarını 3 saat geriye yazar.
+      TZ: ${TZ:-Europe/Istanbul}
     volumes:
       # MySQL verileri kalıcı volume'de tutulur
       - mysql_data:/var/lib/mysql
@@ -42,6 +45,10 @@ services:
       MYSQL_HOST: mysql
       # Oturum deposu: konteyner ağındaki redis servisi.
       REDIS_URL: redis://redis:6379/0
+      # KRİTİK: conversation_logger ve dashboard_service zaman damgasını
+      # datetime.now() ile üretir; bu da konteynerin saat dilimini kullanır.
+      # UTC kalırsa kayıtlar 3 saat geriye yazılır ve panelde sıralama bozulur.
+      TZ: ${TZ:-Europe/Istanbul}
     ports:
       # Yalnız localhost'a bağlanır: dışarıdan tek giriş nginx (TLS) üzerindendir.
       # "8000:8000" yazılsaydı Docker portu 0.0.0.0'a açar ve ufw kurallarını
