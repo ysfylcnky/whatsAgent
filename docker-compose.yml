@@ -17,6 +17,20 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Oturumlar kalıcı veri değil, TTL'li geçici durumdur; yine de yeniden
+    # başlatmada aktif sohbetlerin düşmemesi için AOF açık tutulur.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   app:
     build: .
     restart: unless-stopped
@@ -26,11 +40,16 @@ services:
     # load_dotenv(override=False) olduğu için bu değer .env'deki MYSQL_HOST'u ezer.
     environment:
       MYSQL_HOST: mysql
+      # Oturum deposu: konteyner ağındaki redis servisi.
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   mysql_data:
+  redis_data:

@@ -27,10 +27,14 @@ from Services.session_service import (
     store_product,
     build_products_block
 )
+from Services.session_store import (
+    SessionRegistry,
+    build_session_store,
+    new_session
+)
 from config import (
     MAX_HISTORY,
     LONG_SESSION_MESSAGE_LIMIT,
-    SESSION_TIMEOUT,
     VERIFY_TOKEN,
     STORE_NOTIFY_PHONE,
     STORE_IBAN,
@@ -650,20 +654,15 @@ def is_fresh_greeting(text):
 
 
 def cleanup_sessions():
-    now = time.time()
+    """Süresi dolmuş oturumları temizler.
 
-    expired_sessions = []
+    Redis backend'inde süre yönetimini TTL yaptığı için bu çağrı işlemsizdir;
+    yalnızca bellek içi yedek backend'de gerçek bir tarama yapar.
+    """
+    expired_count = chat_sessions.cleanup()
 
-    for session_id, session in chat_sessions.items():
-
-        if now - session["last_activity"] > SESSION_TIMEOUT:
-            expired_sessions.append(session_id)
-
-    for session_id in expired_sessions:
-        del chat_sessions[session_id]
-
-    if expired_sessions:
-        print(f"🧹 {len(expired_sessions)} oturum temizlendi.")
+    if expired_count:
+        print(f"🧹 {expired_count} oturum temizlendi.")
 
 
 app = FastAPI()
@@ -677,7 +676,11 @@ templates = Jinja2Templates(
     directory="templates"
 )
 initialize_database()
-chat_sessions = {}
+
+# Sohbet oturumları süreç belleğinde değil, dağıtık bir depoda (Redis) tutulur.
+# Bu sayede uygulama stateless'tır ve birden fazla replika ile ölçeklenebilir.
+# Redis yapılandırılmamışsa bellek içi yedeğe düşülür (tek instance).
+chat_sessions = SessionRegistry(build_session_store())
 
 
 @app.middleware("http")
@@ -1175,6 +1178,22 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request):
+    """Oturum birim-iş (unit of work) sınırı.
+
+    İstek başında temiz bir kimlik haritası açılır; istek nasıl sonlanırsa
+    sonlansın (erken return ya da hata) dokunulan oturumlar `finally` içinde
+    tek seferde kalıcı depoya yazılır. Böylece mesaj başına tek yazma yapılır
+    ve hiçbir çıkış yolunda durum kaybolmaz.
+    """
+    chat_sessions.begin_request()
+
+    try:
+        return await _process_whatsapp_webhook(request)
+    finally:
+        chat_sessions.flush()
+
+
+async def _process_whatsapp_webhook(request: Request):
     cleanup_sessions()
     body = await request.json()
 
@@ -1269,17 +1288,8 @@ async def whatsapp_webhook(request: Request):
         log_message(sender, "gelen", message_text)
 
         if sender not in chat_sessions:
-            chat_sessions[sender] = {
-                "history": [],
-                "products": {},
-                "active_url": None,
-                "order_state": None,
-                "last_order": None,
-                "pending_products": None,
-                "last_candidates": None,
-                "message_count": 0,
-                "last_activity": time.time()
-            }
+            chat_sessions[sender] = new_session()
+
         chat_sessions[sender]["last_activity"] = time.time()
 
         session = chat_sessions[sender]

@@ -8,3 +8,5 @@ beautifulsoup4==4.15.0
 
 python-dotenv==1.2.2
 mysql-connector-python
+
+redis==5.2.1

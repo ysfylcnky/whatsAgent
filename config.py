@@ -36,6 +36,11 @@ MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 
+# Redis — sohbet oturumlarının süreç dışında (dağıtık) tutulması için.
+# Tanımlı değilse uygulama bellek içi yedeğe düşer; bu durumda birden fazla
+# instance ile ölçekleme yapılamaz (oturumlar instance'lar arasında kaybolur).
+REDIS_URL = os.getenv("REDIS_URL")
+
 # App
 CACHE_TTL = int(os.getenv("CACHE_TTL") or 600)
 
