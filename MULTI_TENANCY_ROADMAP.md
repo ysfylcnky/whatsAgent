@@ -42,9 +42,12 @@ JWT altyapısı ✅, Docker ✅. Bunlar multi-tenant'ın zeminidir.
 >   ORM'e; eski ham SQL ile yeni ORM aynı veride birebir eşleşti (11/11).
 > - ✅ 0.7 dashboard `_get_top_customers` + `_get_recent_activity` (usage_logs)
 >   ORM'e; bağımsız oturum, eski/yeni birebir (8/8).
-> - ⏳ Sırada: `get_dashboard_data` kalan cursor sorguları (_get_daily_trend,
->   _get_hourly_activity, _get_model_distribution + ana özet), sonra
->   `get_report_summary`, orders, customers, settings yazma/okuma.
+> - ✅ 0.8 `get_dashboard_data` tamamen ORM'e (daily_trend, hourly, model_dist
+>   + ana özet); cursor kalktı. func.date/extract dialect-bağımsız. 13/13 + uçtan
+>   uca 8/8. Dashboard ANA SAYFASI artık tamamen ORM.
+> - ⏳ Sırada: `get_report_summary`, `get_customers_list`, `get_customer_detail`,
+>   `get_ai_usage_detail`, export'lar; yazma yolları (order_service, usage_logger,
+>   customers upsert); `settings_service`.
 
 **Neden ilk:** Kod şu an ~40 yerde ham SQL yazıyor (`WHERE sender = %s`).
 Multi-tenant'ta her sorguya elle `AND tenant_id = %s` eklemek gerekir; tek bir

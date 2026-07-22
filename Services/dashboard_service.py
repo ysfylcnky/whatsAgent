@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import config
 from Services.currency_service import get_usd_try_rate
 from Services.usage_logger import get_connection
-from sqlalchemy import func, distinct, select
+from sqlalchemy import func, distinct, select, extract
 from Services.db import get_session
 from Services.models import Conversation, Customer, UsageLog
 
@@ -93,11 +93,12 @@ def get_performance_summary(result):
     }
 
 
-def _get_daily_trend(cursor):
-    """Son 14 günün gün bazlı dağılımı.
+def _get_daily_trend():
+    """Son 14 günün gün bazlı dağılımı. (Faz 0: ORM, kendi oturumunu açar.)
 
     Veri olmayan günler 0 ile doldurulur; dizi her zaman 14 elemanlı ve
-    tarih sırası kesintisizdir.
+    tarih sırası kesintisizdir. DATE(timestamp) yerine dialect-bağımsız
+    func.date kullanılır (MySQL/SQLite'ta aynı sonuç).
     """
     today = datetime.now().replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -105,23 +106,20 @@ def _get_daily_trend(cursor):
 
     start = today - timedelta(days=13)
 
-    cursor.execute(
-        """
-        SELECT
-            DATE(timestamp) AS d,
-            COUNT(*),
-            SUM(total_tokens),
-            SUM(cost),
-            COUNT(DISTINCT sender)
-        FROM usage_logs
-        WHERE timestamp >= %s
-        GROUP BY DATE(timestamp)
-        ORDER BY d
-        """,
-        (start,)
-    )
-
-    rows = cursor.fetchall()
+    with get_session() as session:
+        rows = (
+            session.query(
+                func.date(UsageLog.timestamp),
+                func.count(),
+                func.sum(UsageLog.total_tokens),
+                func.sum(UsageLog.cost),
+                func.count(distinct(UsageLog.sender)),
+            )
+            .filter(UsageLog.timestamp >= start)
+            .group_by(func.date(UsageLog.timestamp))
+            .order_by(func.date(UsageLog.timestamp))
+            .all()
+        )
 
     # Sorgu sonucunu tarih -> değerler sözlüğüne çevir
     by_day = {}
@@ -163,17 +161,20 @@ def _get_daily_trend(cursor):
     }
 
 
-def _get_hourly_activity(cursor):
-    """0-23 arası 24 saatin tamamı; tüm kayıtlar üzerinden saat dağılımı."""
-    cursor.execute(
-        """
-        SELECT HOUR(timestamp), COUNT(*)
-        FROM usage_logs
-        GROUP BY HOUR(timestamp)
-        """
-    )
+def _get_hourly_activity():
+    """0-23 arası 24 saatin tamamı; saat dağılımı. (Faz 0: ORM.)
 
-    rows = cursor.fetchall()
+    HOUR(timestamp) yerine dialect-bağımsız extract('hour', ...) kullanılır.
+    """
+    with get_session() as session:
+        rows = (
+            session.query(
+                extract("hour", UsageLog.timestamp),
+                func.count(),
+            )
+            .group_by(extract("hour", UsageLog.timestamp))
+            .all()
+        )
 
     by_hour = {int(h): (c or 0) for h, c in rows}
 
@@ -187,18 +188,15 @@ def _get_hourly_activity(cursor):
     }
 
 
-def _get_model_distribution(cursor):
-    """Model alanına göre istek sayısı (çok -> az)."""
-    cursor.execute(
-        """
-        SELECT model, COUNT(*)
-        FROM usage_logs
-        GROUP BY model
-        ORDER BY COUNT(*) DESC
-        """
-    )
-
-    rows = cursor.fetchall()
+def _get_model_distribution():
+    """Model alanına göre istek sayısı (çok -> az). (Faz 0: ORM.)"""
+    with get_session() as session:
+        rows = (
+            session.query(UsageLog.model, func.count())
+            .group_by(UsageLog.model)
+            .order_by(func.count().desc())
+            .all()
+        )
 
     return {
         "labels": [r[0] for r in rows],
@@ -309,49 +307,30 @@ def get_dashboard_data():
 
     usd_try = get_usd_try_rate()
 
-    conn = None
-
     try:
 
-        conn = get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute("""
-
-            SELECT
-
-                COUNT(*) as total_requests,
-
-                COUNT(DISTINCT sender) as unique_customers,
-
-                SUM(prompt_tokens),
-
-                SUM(completion_tokens),
-
-                SUM(total_tokens),
-
-                SUM(cost),
-
-                AVG(response_time)
-
-            FROM usage_logs
-
-        """)
-
-        result = cursor.fetchone()
+        # Faz 0: ana özet sorgusu da ORM'e taşındı; get_dashboard_data artık
+        # ham cursor kullanmaz. result tuple'ının sırası korunur (summary
+        # fonksiyonları bu sıraya göre okur).
+        with get_session() as session:
+            result = session.query(
+                func.count(),
+                func.count(distinct(UsageLog.sender)),
+                func.sum(UsageLog.prompt_tokens),
+                func.sum(UsageLog.completion_tokens),
+                func.sum(UsageLog.total_tokens),
+                func.sum(UsageLog.cost),
+                func.avg(UsageLog.response_time),
+            ).one()
 
         charts = {
-            "daily_trend": _get_daily_trend(cursor),
-            "hourly_activity": _get_hourly_activity(cursor),
-            "model_distribution": _get_model_distribution(cursor),
-            # Faz 0: bu ikisi ORM'e taşındı, kendi oturumlarını açar (cursor almaz).
+            "daily_trend": _get_daily_trend(),
+            "hourly_activity": _get_hourly_activity(),
+            "model_distribution": _get_model_distribution(),
             "top_customers": _get_top_customers()
         }
 
         recent_activity = _get_recent_activity()
-
-        cursor.close()
 
         return {
 
@@ -380,14 +359,6 @@ def get_dashboard_data():
         print("🔴 get_dashboard_data hatası:", e)
 
         return _empty_dashboard(usd_try)
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 # ============ Panel sayfaları: sayfalı liste sorguları ============
