@@ -4,7 +4,7 @@ from Services.currency_service import get_usd_try_rate
 from Services.usage_logger import get_connection
 from sqlalchemy import func, distinct, select
 from Services.db import get_session
-from Services.models import Conversation, Customer
+from Services.models import Conversation, Customer, UsageLog
 
 def get_business_summary(result, usd_try):
 
@@ -206,19 +206,16 @@ def _get_model_distribution(cursor):
     }
 
 
-def _get_top_customers(cursor):
-    """En çok istek atan ilk 8 müşteri."""
-    cursor.execute(
-        """
-        SELECT sender, COUNT(*)
-        FROM usage_logs
-        GROUP BY sender
-        ORDER BY COUNT(*) DESC
-        LIMIT 8
-        """
-    )
-
-    rows = cursor.fetchall()
+def _get_top_customers():
+    """En çok istek atan ilk 8 müşteri. (Faz 0: ORM, kendi oturumunu açar.)"""
+    with get_session() as session:
+        rows = (
+            session.query(UsageLog.sender, func.count())
+            .group_by(UsageLog.sender)
+            .order_by(func.count().desc())
+            .limit(8)
+            .all()
+        )
 
     return {
         "labels": [r[0] for r in rows],
@@ -226,18 +223,21 @@ def _get_top_customers(cursor):
     }
 
 
-def _get_recent_activity(cursor):
-    """Son 10 kayıt; timestamp 'YYYY-MM-DD HH:MM:SS' string olarak verilir."""
-    cursor.execute(
-        """
-        SELECT sender, model, total_tokens, response_time, timestamp
-        FROM usage_logs
-        ORDER BY timestamp DESC
-        LIMIT 10
-        """
-    )
-
-    rows = cursor.fetchall()
+def _get_recent_activity():
+    """Son 10 kayıt; timestamp 'YYYY-MM-DD HH:MM:SS' string. (Faz 0: ORM.)"""
+    with get_session() as session:
+        rows = (
+            session.query(
+                UsageLog.sender,
+                UsageLog.model,
+                UsageLog.total_tokens,
+                UsageLog.response_time,
+                UsageLog.timestamp,
+            )
+            .order_by(UsageLog.timestamp.desc())
+            .limit(10)
+            .all()
+        )
 
     activity = []
 
@@ -345,10 +345,11 @@ def get_dashboard_data():
             "daily_trend": _get_daily_trend(cursor),
             "hourly_activity": _get_hourly_activity(cursor),
             "model_distribution": _get_model_distribution(cursor),
-            "top_customers": _get_top_customers(cursor)
+            # Faz 0: bu ikisi ORM'e taşındı, kendi oturumlarını açar (cursor almaz).
+            "top_customers": _get_top_customers()
         }
 
-        recent_activity = _get_recent_activity(cursor)
+        recent_activity = _get_recent_activity()
 
         cursor.close()
 
