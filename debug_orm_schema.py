@@ -14,11 +14,14 @@
 """
 
 import sys
+from datetime import datetime
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.dialects import mysql
 
-from Services.db import Base, engine
+from Services.db import Base, engine, get_session
 import Services.models as m
 
 MODELS = [m.UsageLog, m.Conversation, m.Customer, m.Order, m.Setting]
@@ -67,8 +70,34 @@ def test_metadata_offline():
         check(f"DDL derleme ({e})", False)
 
 
+def test_orm_roundtrip_sqlite():
+    """MySQL olmadan ORM yaz/oku mantığını SQLite ile doğrular.
+
+    conversation_logger.py'nin kullandığı desen (session.add + commit) burada
+    izole olarak sınanır; Türkçe karakter korunumu dahil.
+    """
+    eng = create_engine("sqlite:///:memory:")
+    m.Conversation.__table__.create(eng)
+    Session = sessionmaker(bind=eng)
+
+    s = Session()
+    s.add(m.Conversation(
+        timestamp=datetime.now(), sender="905550001122",
+        direction="gelen", content="M beden var mı? ğüşıöç",
+    ))
+    s.commit()
+
+    row = s.query(m.Conversation).first()
+    check("ORM round-trip: kayıt yazıldı", row is not None)
+    check("ORM round-trip: alanlar doğru",
+          row and row.sender == "905550001122" and row.direction == "gelen")
+    check("ORM round-trip: Türkçe içerik korundu",
+          row and row.content.endswith("ğüşıöç"))
+    s.close()
+
+
 def test_live():
-    """Gerçek DB'ye bağlanıp sütun uyumunu doğrular."""
+    """Gerçek DB'ye bağlanıp sütun uyumunu + ORM yazma round-trip'ini doğrular."""
     from sqlalchemy import inspect
 
     insp = inspect(engine)
@@ -78,15 +107,35 @@ def test_live():
         check(f"[canlı] tablo mevcut: {t}", t in db_tables)
         if t in db_tables:
             actual = {c["name"] for c in insp.get_columns(t)}
-            # Model sütunlarının tümü DB'de var mı (DB'de fazladan sütun olabilir)
             missing = expected_cols - actual
             check(f"[canlı] {t} sütun uyumu", not missing)
+
+    # Gerçek MySQL'e ORM ile geçici bir kayıt yaz, oku, sil (kalıcı iz bırakmaz).
+    marker = "__orm_selftest__"
+    try:
+        with get_session() as s:
+            s.add(m.Conversation(
+                timestamp=datetime.now(), sender=marker,
+                direction="gelen", content="ORM canlı yazma testi ğş",
+            ))
+
+        with get_session() as s:
+            found = s.query(m.Conversation).filter_by(sender=marker).first()
+            check("[canlı] ORM gerçek DB'ye yazdı ve okudu",
+                  found is not None and found.content.endswith("ğş"))
+            # Temizlik: test kaydını sil
+            s.query(m.Conversation).filter_by(sender=marker).delete()
+
+        check("[canlı] test kaydı temizlendi", True)
+    except Exception as e:
+        check(f"[canlı] ORM yazma round-trip ({e})", False)
 
 
 def main():
     print("--- ORM şema doğrulaması ---\n")
 
     test_metadata_offline()
+    test_orm_roundtrip_sqlite()
 
     if "--live" in sys.argv:
         print("\n--- Canlı DB kontrolü ---")
