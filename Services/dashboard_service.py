@@ -934,25 +934,68 @@ def get_report_summary(start=None, end=None):
 
     usd_try = get_usd_try_rate()
 
-    conn = None
-
     try:
 
-        conn = get_connection()
+        # Faz 0: 3 tablo (usage_logs, orders, conversations) üzerindeki 4 rapor
+        # sorgusu ORM'e taşındı. CASE/COALESCE/NULLIF/TRIM SQLAlchemy func ile
+        # dialect-bağımsız yazıldı. Sözleşme birebir korunur.
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            # --- AI kullanımı ---
+            a = (
+                session.query(
+                    func.count(),
+                    func.sum(UsageLog.prompt_tokens),
+                    func.sum(UsageLog.completion_tokens),
+                    func.sum(UsageLog.total_tokens),
+                    func.sum(UsageLog.cost),
+                    func.avg(UsageLog.response_time),
+                )
+                .filter(UsageLog.timestamp >= start_dt, UsageLog.timestamp < end_ex)
+                .one()
+            )
 
-        # --- AI kullanımı ---
-        cursor.execute(
-            """
-            SELECT COUNT(*), SUM(prompt_tokens), SUM(completion_tokens),
-                   SUM(total_tokens), SUM(cost), AVG(response_time)
-            FROM usage_logs
-            WHERE timestamp >= %s AND timestamp < %s
-            """,
-            (start_dt, end_ex)
-        )
-        a = cursor.fetchone()
+            # --- Siparişler (gerçek sipariş vs güncelleme ayrımı) ---
+            o = (
+                session.query(
+                    func.count(case((Order.is_update == 0, 1))),
+                    func.count(case((Order.is_update == 1, 1))),
+                    func.sum(case((Order.is_update == 0, Order.adet))),
+                )
+                .filter(Order.timestamp >= start_dt, Order.timestamp < end_ex)
+                .one()
+            )
+
+            # Ödeme şekli dağılımı (yalnız gerçek siparişler)
+            payment_label = func.coalesce(
+                func.nullif(func.trim(Order.odeme_sekli), ""), "Belirtilmemiş"
+            )
+            payment_rows = (
+                session.query(payment_label, func.count())
+                .filter(
+                    Order.is_update == 0,
+                    Order.timestamp >= start_dt,
+                    Order.timestamp < end_ex,
+                )
+                .group_by(payment_label)
+                .order_by(func.count().desc())
+                .all()
+            )
+
+            # --- Mesajlar ---
+            m = (
+                session.query(
+                    func.count(case((Conversation.direction == "gelen", 1))),
+                    func.count(case((Conversation.direction == "giden", 1))),
+                    func.count(distinct(Conversation.sender)),
+                )
+                .filter(
+                    Conversation.timestamp >= start_dt,
+                    Conversation.timestamp < end_ex,
+                )
+                .one()
+            )
+
         ai_cost_usd = round(a[4] or 0, 6)
         ai = {
             "requests": a[0] or 0,
@@ -964,61 +1007,21 @@ def get_report_summary(start=None, end=None):
             "avg_response_time": round(a[5] or 0, 3)
         }
 
-        # --- Siparişler (gerçek sipariş vs güncelleme ayrımı) ---
-        cursor.execute(
-            """
-            SELECT
-                COUNT(CASE WHEN is_update = 0 THEN 1 END),
-                COUNT(CASE WHEN is_update = 1 THEN 1 END),
-                SUM(CASE WHEN is_update = 0 THEN adet END)
-            FROM orders
-            WHERE timestamp >= %s AND timestamp < %s
-            """,
-            (start_dt, end_ex)
-        )
-        o = cursor.fetchone()
         orders = {
             "count": o[0] or 0,
             "update_count": o[1] or 0,
             "total_quantity": int(o[2] or 0)
         }
-
-        # Ödeme şekli dağılımı (yalnız gerçek siparişler)
-        cursor.execute(
-            """
-            SELECT COALESCE(NULLIF(TRIM(odeme_sekli), ''), 'Belirtilmemiş'), COUNT(*)
-            FROM orders
-            WHERE is_update = 0 AND timestamp >= %s AND timestamp < %s
-            GROUP BY 1
-            ORDER BY COUNT(*) DESC
-            """,
-            (start_dt, end_ex)
-        )
         orders["by_payment"] = [
             {"odeme_sekli": p, "count": c or 0}
-            for p, c in cursor.fetchall()
+            for p, c in payment_rows
         ]
 
-        # --- Mesajlar ---
-        cursor.execute(
-            """
-            SELECT
-                COUNT(CASE WHEN direction = 'gelen' THEN 1 END),
-                COUNT(CASE WHEN direction = 'giden' THEN 1 END),
-                COUNT(DISTINCT sender)
-            FROM conversations
-            WHERE timestamp >= %s AND timestamp < %s
-            """,
-            (start_dt, end_ex)
-        )
-        m = cursor.fetchone()
         messages = {
             "incoming": m[0] or 0,
             "outgoing": m[1] or 0,
             "unique_customers": m[2] or 0
         }
-
-        cursor.close()
 
         return {
             "start": start_str,
@@ -1034,14 +1037,6 @@ def get_report_summary(start=None, end=None):
         print("🔴 get_report_summary hatası:", e)
 
         return _report_summary_empty(start_str, end_str, usd_try)
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 def get_orders_export_rows(start=None, end=None):
