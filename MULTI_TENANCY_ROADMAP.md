@@ -38,9 +38,10 @@ JWT altyapısı ✅, Docker ✅. Bunlar multi-tenant'ın zeminidir.
 >   canlıda doğrulandı (28/28 + gerçek mesaj testi, hata yok).
 > - ✅ 0.5 `get_conversation_detail` (conversations okuma) ORM'e taşındı;
 >   SQLite izole testi 9/9 (çıktı sözleşmesi + izolasyon korundu).
-> - ⏳ Sırada: `get_conversations_list` (JOIN+GROUP BY), `get_report_summary`,
->   `_get_recent_activity` — karmaşık conversations agregasyonları. Sonra
->   orders, customers, usage_logs, settings.
+> - ✅ 0.6 `get_conversations_list` (JOIN + GROUP BY + correlated subquery)
+>   ORM'e; eski ham SQL ile yeni ORM aynı veride birebir eşleşti (11/11).
+> - ⏳ Sırada: `get_report_summary`, `_get_recent_activity` (kalan conversations
+>   agregasyonları). Sonra orders, customers, usage_logs, settings.
 
 **Neden ilk:** Kod şu an ~40 yerde ham SQL yazıyor (`WHERE sender = %s`).
 Multi-tenant'ta her sorguya elle `AND tenant_id = %s` eklemek gerekir; tek bir

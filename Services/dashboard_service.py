@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import config
 from Services.currency_service import get_usd_try_rate
 from Services.usage_logger import get_connection
+from sqlalchemy import func, distinct, select
 from Services.db import get_session
 from Services.models import Conversation, Customer
 
@@ -424,46 +425,43 @@ def get_conversations_list(page=1, page_size=50):
     """
     page, page_size, offset = _paginate(page, page_size)
 
-    conn = None
-
     try:
 
-        conn = get_connection()
+        # Faz 0: ham SQL'den ORM'e. Sözleşme birebir korunur:
+        # sender bazında grupla, en son mesaj zamanına göre sırala, her satırda
+        # mesaj sayısı + müşteri adı + son mesaj özeti. SUBSTRING(...,1,80) yerine
+        # tam içerik çekilip Python'da [:80] kesilir (dialect-bağımsız, aynı sonuç).
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            total = session.query(
+                func.count(distinct(Conversation.sender))
+            ).scalar() or 0
 
-        cursor.execute(
-            "SELECT COUNT(DISTINCT sender) FROM conversations"
-        )
+            # Her sender için en son mesajın içeriği (ilişkili/correlated alt sorgu)
+            c2 = Conversation.__table__.alias("c2")
+            last_content_subq = (
+                select(c2.c.content)
+                .where(c2.c.sender == Conversation.sender)
+                .order_by(c2.c.timestamp.desc(), c2.c.id.desc())
+                .limit(1)
+                .scalar_subquery()
+            )
 
-        total = cursor.fetchone()[0] or 0
-
-        cursor.execute(
-            """
-            SELECT
-                c.sender,
-                MAX(cu.ad_soyad) AS ad_soyad,
-                COUNT(*) AS msg_count,
-                MAX(c.timestamp) AS last_time,
-                SUBSTRING(
-                    (SELECT c2.content FROM conversations c2
-                     WHERE c2.sender = c.sender
-                     ORDER BY c2.timestamp DESC, c2.id DESC
-                     LIMIT 1),
-                    1, 80
-                ) AS last_content
-            FROM conversations c
-            LEFT JOIN customers cu ON cu.phone = c.sender
-            GROUP BY c.sender
-            ORDER BY last_time DESC
-            LIMIT %s OFFSET %s
-            """,
-            (page_size, offset)
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
+            rows = (
+                session.query(
+                    Conversation.sender,
+                    func.max(Customer.ad_soyad),
+                    func.count(),
+                    func.max(Conversation.timestamp),
+                    last_content_subq,
+                )
+                .outerjoin(Customer, Customer.phone == Conversation.sender)
+                .group_by(Conversation.sender)
+                .order_by(func.max(Conversation.timestamp).desc())
+                .limit(page_size)
+                .offset(offset)
+                .all()
+            )
 
         items = [
             {
@@ -471,7 +469,7 @@ def get_conversations_list(page=1, page_size=50):
                 "ad_soyad": ad_soyad,
                 "msg_count": msg_count or 0,
                 "last_time": last_time.strftime("%Y-%m-%d %H:%M") if last_time else None,
-                "last_content": last_content or ""
+                "last_content": (last_content or "")[:80]
             }
             for sender, ad_soyad, msg_count, last_time, last_content in rows
         ]
@@ -495,14 +493,6 @@ def get_conversations_list(page=1, page_size=50):
             "total": 0,
             "total_pages": 0
         }
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 def get_conversation_detail(sender, page=1, page_size=50):
