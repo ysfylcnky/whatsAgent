@@ -30,6 +30,18 @@ JWT altyapısı ✅, Docker ✅. Bunlar multi-tenant'ın zeminidir.
 
 ## Faz 0 — ORM'e geçiş (ÖN KOŞUL)
 
+> **İlerleme (2026-07-21):**
+> - ✅ 0.1 SQLAlchemy zemini (`Services/db.py` — engine, session, Base).
+> - ✅ 0.2 ORM modelleri (`Services/models.py` — 5 tablo, şemayla birebir).
+> - ✅ 0.3 Şema doğrulaması (`debug_orm_schema.py`, canlıda 23/23).
+> - ✅ 0.4 Pilot: `conversation_logger` (conversations yazma) ORM'e taşındı,
+>   canlıda doğrulandı (28/28 + gerçek mesaj testi, hata yok).
+> - ✅ 0.5 `get_conversation_detail` (conversations okuma) ORM'e taşındı;
+>   SQLite izole testi 9/9 (çıktı sözleşmesi + izolasyon korundu).
+> - ⏳ Sırada: `get_conversations_list` (JOIN+GROUP BY), `get_report_summary`,
+>   `_get_recent_activity` — karmaşık conversations agregasyonları. Sonra
+>   orders, customers, usage_logs, settings.
+
 **Neden ilk:** Kod şu an ~40 yerde ham SQL yazıyor (`WHERE sender = %s`).
 Multi-tenant'ta her sorguya elle `AND tenant_id = %s` eklemek gerekir; tek bir
 unutulan sorgu = bir müşterinin başka müşterinin verisini görmesi = veri

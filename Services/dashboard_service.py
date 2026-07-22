@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 import config
 from Services.currency_service import get_usd_try_rate
 from Services.usage_logger import get_connection
+from Services.db import get_session
+from Services.models import Conversation, Customer
 
 def get_business_summary(result, usd_try):
 
@@ -511,43 +513,37 @@ def get_conversation_detail(sender, page=1, page_size=50):
     """
     page, page_size, offset = _paginate(page, page_size)
 
-    conn = None
-
     try:
 
-        conn = get_connection()
+        # Faz 0: bu okuma yolu ham SQL'den ORM'e taşındı. Çıktı sözleşmesi
+        # (anahtarlar, tarih biçimi, sıralama) birebir korunur; panel değişmez.
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            customer = (
+                session.query(Customer)
+                .filter(Customer.phone == sender)
+                .first()
+            )
+            ad_soyad = customer.ad_soyad if customer else None
 
-        cursor.execute(
-            "SELECT ad_soyad FROM customers WHERE phone = %s",
-            (sender,)
-        )
+            total = (
+                session.query(Conversation)
+                .filter(Conversation.sender == sender)
+                .count()
+            )
 
-        row = cursor.fetchone()
-        ad_soyad = row[0] if row else None
-
-        cursor.execute(
-            "SELECT COUNT(*) FROM conversations WHERE sender = %s",
-            (sender,)
-        )
-
-        total = cursor.fetchone()[0] or 0
-
-        cursor.execute(
-            """
-            SELECT direction, content, timestamp
-            FROM conversations
-            WHERE sender = %s
-            ORDER BY timestamp DESC, id DESC
-            LIMIT %s OFFSET %s
-            """,
-            (sender, page_size, offset)
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
+            rows = (
+                session.query(
+                    Conversation.direction,
+                    Conversation.content,
+                    Conversation.timestamp,
+                )
+                .filter(Conversation.sender == sender)
+                .order_by(Conversation.timestamp.desc(), Conversation.id.desc())
+                .limit(page_size)
+                .offset(offset)
+                .all()
+            )
 
         # Sorgu yeni->eski geldi; sayfa içinde kronolojik göstermek için ters çevir
         messages = [
@@ -582,14 +578,6 @@ def get_conversation_detail(sender, page=1, page_size=50):
             "total": 0,
             "total_pages": 0
         }
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 def get_customers_list(page=1, page_size=50):
