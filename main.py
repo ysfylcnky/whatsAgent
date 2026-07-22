@@ -14,13 +14,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import PlainTextResponse, Response, JSONResponse, RedirectResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Form
 import json
 import time
 import re
 import csv
 import io
-import secrets
 from urllib.parse import urlparse
 import config
 from Services.session_service import (
@@ -32,6 +31,17 @@ from Services.session_store import (
     build_session_store,
     new_session
 )
+from Services.auth_service import (
+    COOKIE_NAME,
+    verify_credentials,
+    create_token,
+    verify_token,
+)
+from config import (
+    JWT_EXPIRE_HOURS,
+    COOKIE_SECURE,
+    DASHBOARD_USER,
+)
 from config import (
     MAX_HISTORY,
     LONG_SESSION_MESSAGE_LIMIT,
@@ -39,8 +49,6 @@ from config import (
     STORE_NOTIFY_PHONE,
     STORE_IBAN,
     STORE_IBAN_NAME,
-    DASHBOARD_USER,
-    DASHBOARD_PASSWORD,
     PANEL_PAGE_SIZE,
 )
 from Services.ikas_service import (
@@ -703,35 +711,110 @@ async def _setup_gate(request: Request, call_next):
     return await call_next(request)
 
 
-# Panel (dashboard) erişimi HTTP Basic Auth ile korunur. Kimlik config/.env'den
-# okunur; parola tanımlı değilse panel erişime kapalıdır (fail-closed).
-dashboard_security = HTTPBasic()
+# ======================================================================
+# Panel kimlik doğrulaması — JWT (httpOnly çerez) tabanlı.
+# Token Services/auth_service.py'de üretilip doğrulanır.
+# ======================================================================
+
+class AuthRequired(Exception):
+    """Geçerli bir oturum çerezi bulunamadığında yükseltilir.
+
+    Nasıl karşılanacağına (HTML sayfası → /login yönlendirmesi, JSON ucu →
+    401) exception handler karar verir; böylece 22 korumalı rota tek ve
+    değişmeyen bir dependency imzasıyla çalışmaya devam eder.
+    """
 
 
-def require_dashboard_auth(
-    credentials: HTTPBasicCredentials = Depends(dashboard_security)
-):
+def require_dashboard_auth(request: Request):
+    """Korumalı panel rotaları için oturum kontrolü.
 
-    # Zamanlama saldırılarına karşı sabit süreli karşılaştırma yapılır
-    user_ok = secrets.compare_digest(
-        credentials.username,
-        DASHBOARD_USER or ""
-    )
+    İmza bilinçli olarak `str` döndürür (eski Basic Auth ile aynı sözleşme):
+    böylece rotalardaki `user: str = Depends(require_dashboard_auth)` kullanımı
+    hiç değişmeden çalışır.
+    """
+    token = request.cookies.get(COOKIE_NAME)
 
-    pass_ok = bool(DASHBOARD_PASSWORD) and secrets.compare_digest(
-        credentials.password,
-        DASHBOARD_PASSWORD
-    )
+    username = verify_token(token)
 
-    if not (user_ok and pass_ok):
+    if username is None:
+        raise AuthRequired()
 
-        raise HTTPException(
+    return username
+
+
+@app.exception_handler(AuthRequired)
+async def _auth_required_handler(request: Request, exc: AuthRequired):
+    """Kimliksiz erişimi istek türüne göre karşılar.
+
+    Panel HTML sayfaları giriş ekranına yönlendirilir; JSON/veri uçları ise
+    (fetch ile çağrıldıkları için) 401 alır ve önyüz gerekirse yönlendirir.
+    """
+    path = request.url.path
+
+    if path.startswith("/admin"):
+        return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Panel erişimi için yetkiniz yok.",
-            headers={"WWW-Authenticate": "Basic"},
+            content={"detail": "Oturum gerekli."},
         )
 
-    return credentials.username
+    return RedirectResponse(url="/login", status_code=307)
+
+
+def _set_session_cookie(response, token):
+    """Oturum token'ını httpOnly çereze yazar."""
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=JWT_EXPIRE_HOURS * 3600,
+        httponly=True,        # JavaScript erişemez → XSS ile token çalınamaz
+        secure=COOKIE_SECURE,  # yalnız HTTPS (production)
+        samesite="lax",       # CSRF yüzeyini daraltır
+        path="/",
+    )
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Giriş ekranı. Zaten oturum açıksa panele yönlendirir."""
+    if verify_token(request.cookies.get(COOKIE_NAME)):
+        return RedirectResponse(url="/dashboard", status_code=307)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"error": None},
+    )
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+):
+    """Giriş formunu işler; başarılıysa çerez set edip panele yönlendirir."""
+    if not verify_credentials(username, password):
+        # Kullanıcı adı/parola ayrımı yapılmaz — bilgi sızıntısını önler.
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={"error": "Kullanıcı adı veya parola hatalı."},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    token = create_token(username)
+
+    response = RedirectResponse(url="/dashboard", status_code=303)
+    _set_session_cookie(response, token)
+    return response
+
+
+@app.get("/logout")
+async def logout():
+    """Oturumu kapatır: çerezi siler ve giriş ekranına yönlendirir."""
+    response = RedirectResponse(url="/login", status_code=307)
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return response
 
 
 @app.get("/")

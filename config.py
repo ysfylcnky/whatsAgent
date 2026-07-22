@@ -24,10 +24,25 @@ IKAS_CLIENT_SECRET = os.getenv("IKAS_CLIENT_SECRET")
 STORE_IBAN = os.getenv("STORE_IBAN")
 STORE_IBAN_NAME = os.getenv("STORE_IBAN_NAME")
 
-# Dashboard (panel) erişimi — HTTP Basic Auth kimliği .env'den okunur, koda gömülmez.
-# Parola tanımlı değilse panel erişime kapalıdır (fail-closed).
+# Dashboard (panel) erişimi — kimlik .env'den okunur, koda gömülmez.
+# Parola/hash tanımlı değilse panel erişime kapalıdır (fail-closed).
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
+# Düz metin parola: yalnız geçiş kolaylığı için desteklenir. Tercih edilen,
+# aşağıdaki DASHBOARD_PASSWORD_HASH'tir (bcrypt).
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
+# bcrypt hash'i (generate_password_hash.py ile üretilir). Tanımlıysa önceliklidir
+# ve düz metin parola hiçbir yerde saklanmaz.
+DASHBOARD_PASSWORD_HASH = os.getenv("DASHBOARD_PASSWORD_HASH")
+
+# JWT (panel oturum token'ı) ayarları.
+# JWT_SECRET zorunludur: tanımlı değilse token üretilemez ve panel kapalıdır.
+# Üretmek için:  python -c "import secrets; print(secrets.token_urlsafe(48))"
+JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS") or 12)
+# Çerez yalnız HTTPS üzerinden gönderilsin mi? Production'da (nginx TLS) True.
+# Yerel http geliştirmede False yapılabilir.
+COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "true").lower() == "true")
 
 # MySQL (bağlantı bilgileri .env'den okunur)
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
