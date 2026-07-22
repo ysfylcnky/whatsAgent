@@ -52,9 +52,13 @@ JWT altyapısı ✅, Docker ✅. Bunlar multi-tenant'ın zeminidir.
 >   günlük trend, maliyet-top müşteri) ORM'e; 13/13. AI Usage SAYFASI artık ORM.
 > - ✅ 0.11 `get_report_summary` (3 tablo: usage_logs+orders+conversations,
 >   CASE/COALESCE/NULLIF/TRIM, tarih aralıklı) ORM'e; 12/12, eski/yeni birebir.
-> - ⏳ Sırada: CSV export'lar (`get_orders_export_rows`,
->   `get_daily_usage_export_rows`); yazma yolları (order_service, usage_logger,
->   customers upsert); `settings_service`.
+> - ✅ 0.12 CSV export'lar (`get_orders_export_rows`, `get_daily_usage_export_rows`)
+>   ORM'e; 11/11. **`dashboard_service.py` ARTIK TAMAMEN ORM** — get_connection
+>   import'u kaldırıldı, cursor kalmadı. Panelin tüm OKUMA tarafı bitti.
+> - ⏳ Sırada — YAZMA yolları (en kritik, tenant izolasyonunun kalbi):
+>   `usage_logger` (log_usage), `order_service` (save_order), customers upsert.
+>   Sonra `settings_service`. Bunlar webhook akışından çağrılır; SQLite +
+>   gerçek WhatsApp mesajıyla test edilecek.
 
 **Neden ilk:** Kod şu an ~40 yerde ham SQL yazıyor (`WHERE sender = %s`).
 Multi-tenant'ta her sorguya elle `AND tenant_id = %s` eklemek gerekir; tek bir

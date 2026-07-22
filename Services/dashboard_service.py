@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 import config
 from Services.currency_service import get_usd_try_rate
-from Services.usage_logger import get_connection
 from sqlalchemy import func, distinct, select, extract, case
 from Services.db import get_session
 from Services.models import Conversation, Customer, UsageLog, Order
@@ -1043,28 +1042,28 @@ def get_orders_export_rows(start=None, end=None):
     """CSV export için aralıktaki ham sipariş satırları (list[list])."""
     start_dt, end_ex, _, _ = _parse_date_range(start, end)
 
-    conn = None
-
     try:
 
-        conn = get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT timestamp, customer_phone, ad_soyad, telefon, urun, renk,
-                   beden, adet, odeme_sekli, teslimat_adresi, is_update
-            FROM orders
-            WHERE timestamp >= %s AND timestamp < %s
-            ORDER BY timestamp
-            """,
-            (start_dt, end_ex)
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
+        # Faz 0: ham SQL'den ORM'e. Aralıktaki tüm sipariş satırları (ham).
+        with get_session() as session:
+            rows = (
+                session.query(
+                    Order.timestamp,
+                    Order.customer_phone,
+                    Order.ad_soyad,
+                    Order.telefon,
+                    Order.urun,
+                    Order.renk,
+                    Order.beden,
+                    Order.adet,
+                    Order.odeme_sekli,
+                    Order.teslimat_adresi,
+                    Order.is_update,
+                )
+                .filter(Order.timestamp >= start_dt, Order.timestamp < end_ex)
+                .order_by(Order.timestamp)
+                .all()
+            )
 
         out = []
         for (ts, phone, ad, tel, urun, renk, beden, adet, odeme, adres, isu) in rows:
@@ -1089,42 +1088,29 @@ def get_orders_export_rows(start=None, end=None):
 
         return []
 
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
 
 def get_daily_usage_export_rows(start=None, end=None):
     """CSV export için günlük AI kullanım özeti satırları (list[list])."""
     start_dt, end_ex, _, _ = _parse_date_range(start, end)
 
-    conn = None
-
     try:
 
-        conn = get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT DATE(timestamp), COUNT(*), SUM(prompt_tokens),
-                   SUM(completion_tokens), SUM(total_tokens), SUM(cost)
-            FROM usage_logs
-            WHERE timestamp >= %s AND timestamp < %s
-            GROUP BY DATE(timestamp)
-            ORDER BY DATE(timestamp)
-            """,
-            (start_dt, end_ex)
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
+        # Faz 0: ham SQL'den ORM'e. Günlük AI kullanım özeti (DATE gruplaması).
+        with get_session() as session:
+            rows = (
+                session.query(
+                    func.date(UsageLog.timestamp),
+                    func.count(),
+                    func.sum(UsageLog.prompt_tokens),
+                    func.sum(UsageLog.completion_tokens),
+                    func.sum(UsageLog.total_tokens),
+                    func.sum(UsageLog.cost),
+                )
+                .filter(UsageLog.timestamp >= start_dt, UsageLog.timestamp < end_ex)
+                .group_by(func.date(UsageLog.timestamp))
+                .order_by(func.date(UsageLog.timestamp))
+                .all()
+            )
 
         out = []
         for (d, req, pt, ct, tt, cost) in rows:
@@ -1143,11 +1129,3 @@ def get_daily_usage_export_rows(start=None, end=None):
         print("🔴 get_daily_usage_export_rows hatası:", e)
 
         return []
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
