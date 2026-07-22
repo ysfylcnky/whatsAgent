@@ -744,21 +744,68 @@ def get_ai_usage_detail():
     """
     usd_try = get_usd_try_rate()
 
-    conn = None
-
     try:
 
-        conn = get_connection()
+        # Faz 0: 4 usage_logs sorgusu da ORM'e taşındı; tek oturumda çalışır.
+        start = (
+            datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=AI_USAGE_TREND_DAYS - 1)
+        )
 
-        cursor = conn.cursor()
+        with get_session() as session:
 
-        # Genel özet
-        cursor.execute("""
-            SELECT COUNT(*), SUM(prompt_tokens), SUM(completion_tokens),
-                   SUM(total_tokens), SUM(cost), AVG(response_time)
-            FROM usage_logs
-        """)
-        r = cursor.fetchone()
+            # Genel özet
+            r = session.query(
+                func.count(),
+                func.sum(UsageLog.prompt_tokens),
+                func.sum(UsageLog.completion_tokens),
+                func.sum(UsageLog.total_tokens),
+                func.sum(UsageLog.cost),
+                func.avg(UsageLog.response_time),
+            ).one()
+
+            # Model bazlı kırılım (maliyete göre azalan)
+            model_rows = (
+                session.query(
+                    UsageLog.model,
+                    func.count(),
+                    func.sum(UsageLog.prompt_tokens),
+                    func.sum(UsageLog.completion_tokens),
+                    func.sum(UsageLog.total_tokens),
+                    func.sum(UsageLog.cost),
+                    func.avg(UsageLog.response_time),
+                )
+                .group_by(UsageLog.model)
+                .order_by(func.sum(UsageLog.cost).desc())
+                .all()
+            )
+
+            # Günlük trend (son AI_USAGE_TREND_DAYS gün)
+            day_rows = (
+                session.query(
+                    func.date(UsageLog.timestamp),
+                    func.count(),
+                    func.sum(UsageLog.cost),
+                    func.avg(UsageLog.response_time),
+                )
+                .filter(UsageLog.timestamp >= start)
+                .group_by(func.date(UsageLog.timestamp))
+                .order_by(func.date(UsageLog.timestamp))
+                .all()
+            )
+
+            # Maliyete göre en yoğun 10 müşteri
+            top_rows = (
+                session.query(
+                    UsageLog.sender,
+                    func.count(),
+                    func.sum(UsageLog.cost),
+                )
+                .group_by(UsageLog.sender)
+                .order_by(func.sum(UsageLog.cost).desc())
+                .limit(10)
+                .all()
+            )
 
         total_requests = r[0] or 0
         total_cost_usd = round(r[4] or 0, 6)
@@ -776,17 +823,8 @@ def get_ai_usage_detail():
             "usd_try_rate": usd_try
         }
 
-        # Model bazlı kırılım (maliyete göre azalan)
-        cursor.execute("""
-            SELECT model, COUNT(*), SUM(prompt_tokens), SUM(completion_tokens),
-                   SUM(total_tokens), SUM(cost), AVG(response_time)
-            FROM usage_logs
-            GROUP BY model
-            ORDER BY SUM(cost) DESC
-        """)
-
         by_model = []
-        for model, req, pt, ct, tt, cost, art in cursor.fetchall():
+        for model, req, pt, ct, tt, cost, art in model_rows:
             req = req or 0
             cost = round(cost or 0, 6)
             by_model.append({
@@ -800,26 +838,9 @@ def get_ai_usage_detail():
                 "avg_cost": round(cost / req, 6) if req else 0
             })
 
-        # Günlük trend (son AI_USAGE_TREND_DAYS gün): maliyet + ort. yanıt süresi + istek
-        start = (
-            datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=AI_USAGE_TREND_DAYS - 1)
-        )
-
-        cursor.execute(
-            """
-            SELECT DATE(timestamp), COUNT(*), SUM(cost), AVG(response_time)
-            FROM usage_logs
-            WHERE timestamp >= %s
-            GROUP BY DATE(timestamp)
-            ORDER BY DATE(timestamp)
-            """,
-            (start,)
-        )
-
         by_day = {
             str(d): (req or 0, round(cost or 0, 6), round(art or 0, 3))
-            for d, req, cost, art in cursor.fetchall()
+            for d, req, cost, art in day_rows
         }
 
         labels, d_cost, d_art, d_req = [], [], [], []
@@ -831,21 +852,10 @@ def get_ai_usage_detail():
             d_cost.append(cost)
             d_art.append(art)
 
-        # Maliyete göre en yoğun 10 müşteri
-        cursor.execute("""
-            SELECT sender, COUNT(*), SUM(cost)
-            FROM usage_logs
-            GROUP BY sender
-            ORDER BY SUM(cost) DESC
-            LIMIT 10
-        """)
-
         top_customers = [
             {"sender": s, "requests": req or 0, "cost_usd": round(cost or 0, 6)}
-            for s, req, cost in cursor.fetchall()
+            for s, req, cost in top_rows
         ]
-
-        cursor.close()
 
         return {
             "summary": summary,
@@ -864,14 +874,6 @@ def get_ai_usage_detail():
         print("🔴 get_ai_usage_detail hatası:", e)
 
         return _ai_usage_empty(usd_try)
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 # ======================================================================

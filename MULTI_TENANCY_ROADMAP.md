@@ -48,8 +48,10 @@ JWT altyapısı ✅, Docker ✅. Bunlar multi-tenant'ın zeminidir.
 > - ✅ 0.9 `get_customers_list` (customers LEFT JOIN orders + CASE) ve
 >   `get_customer_detail` (customers + orders) ORM'e; 14/14, eski/yeni birebir.
 >   Customers SAYFASI artık ORM.
-> - ⏳ Sırada: `get_ai_usage_detail`, `get_report_summary`, export'lar; yazma
->   yolları (order_service, usage_logger, customers upsert); `settings_service`.
+> - ✅ 0.10 `get_ai_usage_detail` (4 usage_logs sorgusu: özet, model kırılımı,
+>   günlük trend, maliyet-top müşteri) ORM'e; 13/13. AI Usage SAYFASI artık ORM.
+> - ⏳ Sırada: `get_report_summary`, CSV export'lar; yazma yolları (order_service,
+>   usage_logger, customers upsert); `settings_service`.
 
 **Neden ilk:** Kod şu an ~40 yerde ham SQL yazıyor (`WHERE sender = %s`).
 Multi-tenant'ta her sorguya elle `AND tenant_id = %s` eklemek gerekir; tek bir
