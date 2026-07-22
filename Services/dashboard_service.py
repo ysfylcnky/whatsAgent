@@ -2,9 +2,9 @@ from datetime import datetime, timedelta
 import config
 from Services.currency_service import get_usd_try_rate
 from Services.usage_logger import get_connection
-from sqlalchemy import func, distinct, select, extract
+from sqlalchemy import func, distinct, select, extract, case
 from Services.db import get_session
-from Services.models import Conversation, Customer, UsageLog
+from Services.models import Conversation, Customer, UsageLog, Order
 
 def get_business_summary(result, usd_try):
 
@@ -550,39 +550,35 @@ def get_customers_list(page=1, page_size=50):
     """
     page, page_size, offset = _paginate(page, page_size)
 
-    conn = None
-
     try:
 
-        conn = get_connection()
+        # Faz 0: ham SQL'den ORM'e. customers LEFT JOIN orders; gerçek sipariş
+        # sayısı is_update=0 satırlardan CASE ile sayılır. Sözleşme korunur.
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            total = session.query(Customer).count()
 
-        cursor.execute("SELECT COUNT(*) FROM customers")
-
-        total = cursor.fetchone()[0] or 0
-
-        cursor.execute(
-            """
-            SELECT
-                cu.phone,
-                cu.ad_soyad,
-                cu.first_seen,
-                cu.last_seen,
-                COUNT(CASE WHEN o.is_update = 0 THEN 1 END) AS order_count,
-                MAX(o.timestamp) AS last_order_time
-            FROM customers cu
-            LEFT JOIN orders o ON o.customer_phone = cu.phone
-            GROUP BY cu.phone, cu.ad_soyad, cu.first_seen, cu.last_seen
-            ORDER BY cu.last_seen DESC
-            LIMIT %s OFFSET %s
-            """,
-            (page_size, offset)
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
+            rows = (
+                session.query(
+                    Customer.phone,
+                    Customer.ad_soyad,
+                    Customer.first_seen,
+                    Customer.last_seen,
+                    func.count(case((Order.is_update == 0, 1))),
+                    func.max(Order.timestamp),
+                )
+                .outerjoin(Order, Order.customer_phone == Customer.phone)
+                .group_by(
+                    Customer.phone,
+                    Customer.ad_soyad,
+                    Customer.first_seen,
+                    Customer.last_seen,
+                )
+                .order_by(Customer.last_seen.desc())
+                .limit(page_size)
+                .offset(offset)
+                .all()
+            )
 
         items = [
             {
@@ -616,14 +612,6 @@ def get_customers_list(page=1, page_size=50):
             "total_pages": 0
         }
 
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
 
 def get_customer_detail(phone, page=1, page_size=50):
     """Tek bir müşterinin sipariş geçmişi (sayfalı, yeni->eski).
@@ -632,47 +620,49 @@ def get_customer_detail(phone, page=1, page_size=50):
     """
     page, page_size, offset = _paginate(page, page_size)
 
-    conn = None
-
     try:
 
-        conn = get_connection()
+        # Faz 0: ham SQL'den ORM'e. Müşteri bilgisi + sipariş geçmişi (yeni->eski).
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            customer = (
+                session.query(Customer)
+                .filter(Customer.phone == phone)
+                .first()
+            )
+            ad_soyad = customer.ad_soyad if customer else None
+            first_seen = (
+                customer.first_seen.strftime("%Y-%m-%d %H:%M")
+                if (customer and customer.first_seen) else None
+            )
+            last_seen = (
+                customer.last_seen.strftime("%Y-%m-%d %H:%M")
+                if (customer and customer.last_seen) else None
+            )
 
-        cursor.execute(
-            "SELECT ad_soyad, first_seen, last_seen FROM customers WHERE phone = %s",
-            (phone,)
-        )
+            total = (
+                session.query(Order)
+                .filter(Order.customer_phone == phone)
+                .count()
+            )
 
-        row = cursor.fetchone()
-
-        ad_soyad = row[0] if row else None
-        first_seen = row[1].strftime("%Y-%m-%d %H:%M") if (row and row[1]) else None
-        last_seen = row[2].strftime("%Y-%m-%d %H:%M") if (row and row[2]) else None
-
-        cursor.execute(
-            "SELECT COUNT(*) FROM orders WHERE customer_phone = %s",
-            (phone,)
-        )
-
-        total = cursor.fetchone()[0] or 0
-
-        cursor.execute(
-            """
-            SELECT timestamp, urun, renk, beden, adet, odeme_sekli,
-                   teslimat_adresi, is_update
-            FROM orders
-            WHERE customer_phone = %s
-            ORDER BY timestamp DESC, id DESC
-            LIMIT %s OFFSET %s
-            """,
-            (phone, page_size, offset)
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
+            rows = (
+                session.query(
+                    Order.timestamp,
+                    Order.urun,
+                    Order.renk,
+                    Order.beden,
+                    Order.adet,
+                    Order.odeme_sekli,
+                    Order.teslimat_adresi,
+                    Order.is_update,
+                )
+                .filter(Order.customer_phone == phone)
+                .order_by(Order.timestamp.desc(), Order.id.desc())
+                .limit(page_size)
+                .offset(offset)
+                .all()
+            )
 
         orders = [
             {
@@ -715,14 +705,6 @@ def get_customer_detail(phone, page=1, page_size=50):
             "total": 0,
             "total_pages": 0
         }
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 # ============ AI Usage sayfası: detaylı kullanım analizi ============
