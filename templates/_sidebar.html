@@ -1,5 +1,13 @@
 <!-- Ortak sidebar. active_page değişkeni ile aktif menü vurgulanır. -->
-<aside class="sidebar">
+
+<!-- Mobil menü tetikleyici — yalnız küçük ekranlarda görünür (CSS ile) -->
+<button class="nav-toggle" id="navToggle" aria-label="Menüyü aç/kapat" aria-expanded="false">
+    <i class="fa-solid fa-bars"></i>
+</button>
+<!-- Drawer açıkken içeriği karartan katman -->
+<div class="nav-overlay" id="navOverlay"></div>
+
+<aside class="sidebar" id="sidebar">
 
     <div>
         <div class="logo">
@@ -52,3 +60,41 @@
     </div>
 
 </aside>
+
+<!-- Mobil drawer aç/kapa — sidebar tüm sayfalara include edildiği için
+     bu script de her sayfada otomatik çalışır (ayrı JS dosyası gerekmez). -->
+<script>
+(function () {
+    var toggle  = document.getElementById('navToggle');
+    var sidebar = document.getElementById('sidebar');
+    var overlay = document.getElementById('navOverlay');
+    if (!toggle || !sidebar || !overlay) return;
+
+    function open()  {
+        sidebar.classList.add('open');
+        overlay.classList.add('show');
+        document.body.classList.add('nav-open');
+        toggle.setAttribute('aria-expanded', 'true');
+    }
+    function close() {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('show');
+        document.body.classList.remove('nav-open');
+        toggle.setAttribute('aria-expanded', 'false');
+    }
+
+    toggle.addEventListener('click', function () {
+        sidebar.classList.contains('open') ? close() : open();
+    });
+    overlay.addEventListener('click', close);
+
+    // Bir menü öğesine dokununca drawer kapansın (sayfa geçişi)
+    sidebar.querySelectorAll('.nav-item').forEach(function (a) {
+        a.addEventListener('click', close);
+    });
+    // ESC ile kapat
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') close();
+    });
+})();
+</script>

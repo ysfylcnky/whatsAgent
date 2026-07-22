@@ -78,6 +78,24 @@ h1,h2,h3,h4,.kpi-card h2,.num{ font-family:'Sora',sans-serif; }
 /* ===================================================
    SIDEBAR
 ===================================================*/
+
+/* Mobil menü tetikleyici ve karartma katmanı — masaüstünde gizli,
+   yalnız responsive breakpoint'te devreye girer. */
+.nav-toggle{
+    display:none;
+    position:fixed; top:14px; left:14px; z-index:65;
+    width:46px; height:46px; border-radius:13px;
+    background:var(--surface); border:1px solid var(--border);
+    color:var(--text); font-size:18px; cursor:pointer;
+    align-items:center; justify-content:center;
+}
+.nav-overlay{
+    display:none;
+    position:fixed; inset:0; z-index:55;
+    background:rgba(4,6,12,.6); backdrop-filter:blur(2px);
+}
+.nav-overlay.show{ display:block; }
+
 .sidebar{
     width:258px;
     flex-shrink:0;
@@ -412,8 +430,24 @@ h1,h2,h3,h4,.kpi-card h2,.num{ font-family:'Sora',sans-serif; }
     .biz-item:nth-child(3){ border-left:none; padding-left:0; }
 }
 @media (max-width:760px){
-    .sidebar{ display:none; }
-    .main-content{ padding:22px 16px 40px; }
+    /* Menü artık gizlenmiyor; ekran dışına kayan bir drawer'a dönüşüyor
+       ve hamburger ile açılıyor. Böylece telefonda navigasyon korunur. */
+    .nav-toggle{ display:flex; }
+    .sidebar{
+        position:fixed; top:0; left:0; height:100vh; z-index:60;
+        transform:translateX(-100%);
+        transition:transform .25s ease;
+        overflow-y:auto;
+    }
+    .sidebar.open{
+        transform:translateX(0);
+        box-shadow:0 20px 60px rgba(0,0,0,.55);
+    }
+    /* Drawer açıkken hamburger gizlenir; kapatma overlay veya menü ile yapılır */
+    body.nav-open .nav-toggle{ display:none; }
+
+    /* Üstte hamburger için boşluk bırak */
+    .main-content{ padding:72px 16px 40px; }
     .kpi-grid,.biz-strip{ grid-template-columns:1fr; }
     .biz-item + .biz-item{ border-left:none; padding-left:0; }
     .topbar h1{ font-size:25px; }

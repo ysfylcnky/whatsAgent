@@ -148,6 +148,7 @@ Rate Limiting: IP veya Tenant bazlı Redis rate limiting. (Zorluk: Düşük | Fa
 Abonelik (Billing) Entegrasyonu: Kullanıma (usage) dayalı SaaS ödeme altyapısı kurulması. (Zorluk: Yüksek | Fayda: Ürünün para kazanmasını sağlar).
 🟢 Düşük (Uzun Vadeli Hedefler)
 Frontend Değişimi: Jinja2'den React/Next.js'e geçiş. (Zorluk: Yüksek | Fayda: Modern, hızlı ve mobil uyumlu yönetim paneli).
+> **Ara iyileştirme (2026-07-21):** React'e geçmeden, panel mobil uyumlu hale getirildi. Sorunun kökü: mobilde sidebar `display:none` oluyor ama açacak kontrol yoktu → navigasyon kayboluyordu. Çözüm: `_sidebar.html`'e hamburger + kayar drawer + overlay (tek dosya, tüm sayfalara include ile yayıldı), `dashboard.css`'te drawer breakpoint'i. Backend/veri/auth'a dokunulmadı. React geçişi ayrı ve planlı bir iş olarak ertelendi (tek mağaza için acil değil).
 Yeni Platform Destekleri: Shopify vb. adaptörlerin Services/ altına eklenmesi. (Zorluk: Orta | Fayda: Pazar payını büyütür).
 14. Genel Değerlendirme
 Proje Puanı: 6.5 / 10 (Harika bir MVP (Minimum Viable Product), ancak SaaS olarak prodüksiyona hazır bir temel değil.)
