@@ -8,26 +8,23 @@ varsayılanına düşülür. Okuma fonksiyonları DB erişilemezse uygulamayı
 
 from datetime import datetime
 
-from Services.usage_logger import get_connection
+from sqlalchemy import select
+
+from Services.db import get_session
+from Services.models import Setting
 
 
 def get_all_stored_settings():
-    """settings tablosundaki tüm kayıtları {skey: svalue} olarak döndürür."""
-    conn = None
-
+    """settings tablosundaki tüm kayıtları {skey: svalue} olarak döndürür (ORM)."""
     try:
 
-        conn = get_connection()
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            rows = session.execute(
+                select(Setting.skey, Setting.svalue)
+            ).all()
 
-        cursor.execute("SELECT skey, svalue FROM settings")
-
-        rows = cursor.fetchall()
-
-        cursor.close()
-
-        return {k: v for k, v in rows}
+            return {k: v for k, v in rows}
 
     except Exception as e:
 
@@ -35,35 +32,16 @@ def get_all_stored_settings():
 
         return {}
 
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
 
 def get_stored_setting(key):
-    """Tek bir ayarın DB'deki değerini döndürür (yoksa/erişilemezse None)."""
-    conn = None
-
+    """Tek bir ayarın DB'deki değerini döndürür (yoksa/erişilemezse None) — ORM."""
     try:
 
-        conn = get_connection()
+        with get_session() as session:
 
-        cursor = conn.cursor()
+            row = session.get(Setting, key)
 
-        cursor.execute(
-            "SELECT svalue FROM settings WHERE skey = %s",
-            (key,)
-        )
-
-        row = cursor.fetchone()
-
-        cursor.close()
-
-        return row[0] if row else None
+            return row.svalue if row else None
 
     except Exception as e:
 
@@ -71,47 +49,34 @@ def get_stored_setting(key):
 
         return None
 
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
 
 def save_stored_settings(mapping):
-    """Verilen {skey: svalue} eşlemesini UPSERT eder. Başarıda True döner.
+    """Verilen {skey: svalue} eşlemesini UPSERT eder (ORM). Başarıda True döner.
 
     Boş string değer kaydı, ilgili ayarın .env/varsayılana düşmesi anlamına
-    gelir (config tarafında boş değer 'yok' sayılır).
+    gelir (config tarafında boş değer 'yok' sayılır). Upsert semantiği korunur:
+    anahtar yoksa eklenir, varsa svalue ve updated_at güncellenir.
     """
     if not mapping:
         return True
 
-    conn = None
-
     try:
-
-        conn = get_connection()
-
-        cursor = conn.cursor()
 
         now = datetime.now()
 
-        for skey, svalue in mapping.items():
-            cursor.execute(
-                """
-                INSERT INTO settings (skey, svalue, updated_at)
-                VALUES (%s, %s, %s)
-                ON DUPLICATE KEY UPDATE svalue = VALUES(svalue), updated_at = VALUES(updated_at)
-                """,
-                (skey, svalue, now)
-            )
+        with get_session() as session:
 
-        conn.commit()
+            for skey, svalue in mapping.items():
 
-        cursor.close()
+                obj = session.get(Setting, skey)
+
+                if obj is None:
+                    session.add(
+                        Setting(skey=skey, svalue=svalue, updated_at=now)
+                    )
+                else:
+                    obj.svalue = svalue
+                    obj.updated_at = now
 
         return True
 
@@ -120,11 +85,3 @@ def save_stored_settings(mapping):
         print("🔴 save_stored_settings hatası:", e)
 
         return False
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass

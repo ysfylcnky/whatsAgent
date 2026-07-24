@@ -8,6 +8,8 @@ from config import (
     MYSQL_PASSWORD,
     MYSQL_DATABASE,
 )
+from Services.db import get_session
+from Services.models import UsageLog
 
 # Tüm bağlantılar tek bir havuzdan yönetilir.
 # Havuz ilk ihtiyaç anında (lazy) kurulur.
@@ -163,58 +165,32 @@ def log_usage(
     cost,
     response_time
 ):
-    """Tek bir OpenAI çağrısının kullanım bilgisini kaydeder.
+    """Tek bir OpenAI çağrısının kullanım bilgisini kaydeder (ORM).
 
     Loglama hatası yanıt akışını (webhook) kesmesin diye tüm hatalar yutulur.
-    """
-    conn = None
 
+    Faz 0: bu yazma yolu ham SQL'den SQLAlchemy ORM'e taşındı. get_session
+    context'i commit/rollback/close işini üstlenir; INSERT semantiği aynıdır.
+    """
     try:
 
-        conn = get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO usage_logs (
-                timestamp,
-                sender,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
-                cost,
-                response_time
+        with get_session() as session:
+            session.add(
+                UsageLog(
+                    timestamp=datetime.now(),
+                    sender=sender,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    cost=cost,
+                    response_time=response_time,
+                )
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                datetime.now(),
-                sender,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
-                cost,
-                response_time
-            )
-        )
-
-        conn.commit()
-        cursor.close()
 
     except Exception as e:
 
         print("🔴 log_usage hatası:", e)
-
-    finally:
-
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 def get_total_requests():

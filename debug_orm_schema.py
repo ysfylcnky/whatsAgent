@@ -24,18 +24,24 @@ from sqlalchemy.dialects import mysql
 from Services.db import Base, engine, get_session
 import Services.models as m
 
-MODELS = [m.UsageLog, m.Conversation, m.Customer, m.Order, m.Setting]
+MODELS = [m.UsageLog, m.Conversation, m.Customer, m.Order, m.Setting,
+          m.Tenant, m.User]
 
-# Mevcut şemadaki (usage_logger.py) sütun -> beklenen özet tip.
+# Beklenen sütunlar. Faz 1: 5 mevcut tabloya tenant_id eklendi; tenants + users
+# tabloları eklendi. --live modda bu, migration'ın uygulandığını da doğrular.
 EXPECTED = {
     "usage_logs": {"id", "timestamp", "sender", "model", "prompt_tokens",
-                   "completion_tokens", "total_tokens", "cost", "response_time"},
-    "conversations": {"id", "timestamp", "sender", "direction", "content"},
-    "customers": {"phone", "ad_soyad", "first_seen", "last_seen"},
+                   "completion_tokens", "total_tokens", "cost", "response_time",
+                   "tenant_id"},
+    "conversations": {"id", "timestamp", "sender", "direction", "content",
+                      "tenant_id"},
+    "customers": {"phone", "ad_soyad", "first_seen", "last_seen", "tenant_id"},
     "orders": {"id", "timestamp", "customer_phone", "ad_soyad", "telefon",
                "teslimat_adresi", "urun", "renk", "beden", "adet",
-               "odeme_sekli", "is_update"},
-    "settings": {"skey", "svalue", "updated_at"},
+               "odeme_sekli", "is_update", "tenant_id"},
+    "settings": {"skey", "svalue", "updated_at", "tenant_id"},
+    "tenants": {"id", "name", "status", "created_at"},
+    "users": {"id", "tenant_id", "email", "password_hash", "role", "created_at"},
 }
 
 results = []
@@ -48,7 +54,7 @@ def check(name, cond):
 
 def test_metadata_offline():
     tables = set(Base.metadata.tables.keys())
-    check("5 tablo tanımlı", tables == set(EXPECTED.keys()))
+    check("7 tablo tanımlı", tables == set(EXPECTED.keys()))
 
     for model in MODELS:
         t = model.__tablename__
