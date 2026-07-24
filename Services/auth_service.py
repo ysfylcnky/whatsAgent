@@ -96,6 +96,9 @@ def verify_credentials(username, password):
     Parola hash tanımlı değilse her zaman False (panel kapalı). Kullanıcı adı
     yanlış olsa bile bcrypt karşılaştırması yapılır; böylece "kullanıcı var mı"
     bilgisini yanıt süresinden sızdıran zamanlama farkı oluşmaz.
+
+    NOT (Faz 2): Bu, geçiş dönemi .env fallback'idir. Birincil kimlik
+    doğrulama artık authenticate() ile users tablosundan yapılır.
     """
     candidate = _to_bcrypt_bytes(password or "")
 
@@ -110,6 +113,69 @@ def verify_credentials(username, password):
     return user_ok and pass_ok
 
 
+# Geçiş dönemi .env fallback'i başarılı olduğunda hangi tenant'a bağlanılacağı.
+# Eski tek-kiracılı Mumi = tenant_id 1 (Faz 1 seed'i).
+LEGACY_FALLBACK_TENANT_ID = 1
+
+
+def authenticate(identifier, password):
+    """E-posta (veya kullanıcı adı) + parolayı users tablosundan doğrular.
+
+    Başarılıysa {id, tenant_id, email, role} dict'i, değilse None döner.
+
+    Faz 2 davranışı:
+      * users tablosunda eşleşen kullanıcı varsa: bcrypt ile parola doğrulanır;
+        parola yanlışsa giriş REDDEDİLİR (.env fallback'ine düşülmez — gerçek
+        bir başarısız giriştir).
+      * Eşleşen kullanıcı yoksa: geçiş dönemi .env doğrulaması (verify_credentials)
+        denenir; başarılıysa Mumi (tenant 1) olarak giriş yapılır (deprecation
+        uyarısı loglanır). Bu, seed henüz çalışmadıysa kilitlenmeyi önler.
+
+    Sabit-süreli: kullanıcı bulunmasa bile bir bcrypt karşılaştırması yapılır;
+    "kullanıcı var mı" bilgisi yanıt süresinden sızmaz.
+    """
+    candidate = _to_bcrypt_bytes(password or "")
+
+    # Lazy import: auth_service <-> user_service import döngüsünü önler.
+    from Services.user_service import get_user_by_email
+
+    user = get_user_by_email(identifier)
+
+    if user is not None:
+        stored = (user.get("password_hash") or "").encode("utf-8")
+        try:
+            ok = bool(stored) and bcrypt.checkpw(candidate, stored)
+        except ValueError:
+            # Bozuk/eksik hash — güvenli tarafta kal.
+            ok = False
+        if ok:
+            return {
+                "id": user["id"],
+                "tenant_id": user["tenant_id"],
+                "email": user["email"],
+                "role": user["role"],
+            }
+        return None
+
+    # Kullanıcı yok: sabit-süreli sahte bcrypt (timing sızıntısı olmasın).
+    bcrypt.checkpw(candidate, bcrypt.hashpw(b"x", bcrypt.gensalt()))
+
+    # Geçiş fallback'i: eski .env admin (yalnız Mumi/tenant 1 için anlamlı).
+    if verify_credentials(identifier, password):
+        print(
+            "⚠️ .env fallback ile giriş (deprecated) — bu kullanıcı users "
+            "tablosuna taşınmalı (migrate_faz2_admin_user.py)."
+        )
+        return {
+            "id": None,
+            "tenant_id": LEGACY_FALLBACK_TENANT_ID,
+            "email": identifier,
+            "role": "owner",
+        }
+
+    return None
+
+
 def _constant_time_eq(a, b):
     """Sabit süreli string karşılaştırması (hmac.compare_digest sarmalayıcı)."""
     import hmac
@@ -120,34 +186,56 @@ def _constant_time_eq(a, b):
 # Token üretimi / doğrulaması
 # ----------------------------------------------------------------------
 
-def create_token(username):
-    """Verilen kullanıcı için imzalı, süreli bir JWT üretir."""
+def create_token(subject, tenant_id=None, user_id=None, role=None):
+    """Verilen özne (e-posta/kullanıcı adı) için imzalı, süreli bir JWT üretir.
+
+    Faz 2: tenant_id / user_id / role claim'leri EKLENİR (verilirse). Parametreler
+    opsiyonel olduğundan eski `create_token(username)` çağrıları aynen çalışır.
+    Bu claim'ler sonraki fazlarda (webhook routing, veri izolasyonu) aktif
+    tenant bağlamını taşır.
+    """
     now = int(time.time())
 
     payload = {
-        "sub": username,
+        "sub": subject,
         "iat": now,
         "exp": now + JWT_EXPIRE_HOURS * 3600,
     }
 
+    if tenant_id is not None:
+        payload["tenant_id"] = tenant_id
+    if user_id is not None:
+        payload["user_id"] = user_id
+    if role is not None:
+        payload["role"] = role
+
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def verify_token(token):
-    """Token'ı doğrular; geçerliyse kullanıcı adını, değilse None döndürür.
+def decode_token(token):
+    """Token'ı doğrular; geçerliyse TÜM payload'ı (dict), değilse None döndürür.
 
     İmza, son kullanma (exp) ve biçim hataları burada yakalanır; süresi dolmuş
-    veya kurcalanmış token sessizce reddedilir.
+    veya kurcalanmış token sessizce reddedilir. tenant_id/user_id claim'lerine
+    erişmek için kullanılır.
     """
     if not token:
         return None
 
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError:
         return None
 
-    return payload.get("sub")
+
+def verify_token(token):
+    """Token geçerliyse özneyi (sub), değilse None döndürür.
+
+    Geriye uyumluluk için korunur (require_dashboard_auth ve login_page bunu
+    kullanır). decode_token üzerinden çalışır.
+    """
+    payload = decode_token(token)
+    return payload.get("sub") if payload else None
 
 
 def is_auth_configured():

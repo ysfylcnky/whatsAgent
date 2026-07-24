@@ -33,9 +33,10 @@ from Services.session_store import (
 )
 from Services.auth_service import (
     COOKIE_NAME,
-    verify_credentials,
+    authenticate,
     create_token,
     verify_token,
+    decode_token,
 )
 from config import (
     JWT_EXPIRE_HOURS,
@@ -734,12 +735,18 @@ def require_dashboard_auth(request: Request):
     """
     token = request.cookies.get(COOKIE_NAME)
 
-    username = verify_token(token)
+    payload = decode_token(token)
 
-    if username is None:
+    if payload is None:
         raise AuthRequired()
 
-    return username
+    # Faz 2: token'daki tenant bağlamını istek durumuna koy. Dönüş değeri
+    # (username=sub) DEĞİŞMEZ — 22 korumalı rota aynı imzayla çalışır. Bu alanlar
+    # sonraki fazlarda (webhook routing / veri izolasyonu) kullanılacaktır.
+    request.state.tenant_id = payload.get("tenant_id")
+    request.state.user_id = payload.get("user_id")
+
+    return payload.get("sub")
 
 
 @app.exception_handler(AuthRequired)
@@ -792,8 +799,15 @@ async def login_submit(
     username: str = Form(...),
     password: str = Form(...),
 ):
-    """Giriş formunu işler; başarılıysa çerez set edip panele yönlendirir."""
-    if not verify_credentials(username, password):
+    """Giriş formunu işler; başarılıysa çerez set edip panele yönlendirir.
+
+    Faz 2: kimlik doğrulama users tablosundan (authenticate) yapılır; token'a
+    tenant_id + user_id claim'leri konur. Mumi geçişi için .env fallback'i
+    authenticate içinde korunur (davranış Mumi için değişmez).
+    """
+    user = authenticate(username, password)
+
+    if not user:
         # Kullanıcı adı/parola ayrımı yapılmaz — bilgi sızıntısını önler.
         return templates.TemplateResponse(
             request=request,
@@ -802,7 +816,12 @@ async def login_submit(
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
-    token = create_token(username)
+    token = create_token(
+        user["email"],
+        tenant_id=user["tenant_id"],
+        user_id=user["id"],
+        role=user.get("role"),
+    )
 
     response = RedirectResponse(url="/dashboard", status_code=303)
     _set_session_cookie(response, token)
